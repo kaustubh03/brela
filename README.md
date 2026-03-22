@@ -15,6 +15,7 @@
 | [`@brela/core`](./packages/core) | Shared types and session writer |
 | [`brela`](./packages/cli) | CLI — `brela init`, `brela report`, `brela hook` |
 | [`brela-vscode`](./packages/vscode-extension) | VS Code extension — silent background attribution |
+| [`@brela/api`](./packages/api) | Backend API — auth, reports, usage data, email digests |
 
 ## Quick start
 
@@ -28,6 +29,40 @@ brela init
 # See today's attribution report
 brela report
 ```
+
+## API Server
+
+The `@brela/api` package provides a Fastify-based backend for persistent storage, authentication, and automated reporting.
+
+**Tech stack:** Node.js + Fastify, Supabase (Postgres), Supabase Auth (GitHub/Google OAuth), pg_cron
+
+```bash
+# Copy env template and configure Supabase credentials
+cp packages/api/.env.example packages/api/.env
+
+# Start the API server in dev mode
+npm run dev:api
+
+# Health check
+curl http://localhost:3001/health
+```
+
+**API routes** (all under `/api/v1`):
+
+| Route | Method | Description |
+|---|---|---|
+| `/auth/signin` | POST | Initiate GitHub/Google OAuth |
+| `/auth/callback` | GET | OAuth callback |
+| `/auth/refresh` | POST | Refresh access token |
+| `/auth/me` | GET | Current user profile |
+| `/auth/profile` | PATCH | Update profile |
+| `/reports` | GET/POST | List & create report snapshots |
+| `/reports/:id` | GET/DELETE | Get or delete a report |
+| `/usage/ingest` | POST | Batch ingest attribution events |
+| `/usage` | GET | Query aggregated usage data |
+| `/usage/events` | GET | Raw attribution events |
+| `/emails/digest/trigger` | POST | Trigger weekly digest emails |
+| `/emails/digests` | GET | Digest email history |
 
 ## How it works
 
