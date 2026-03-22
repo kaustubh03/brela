@@ -95,7 +95,7 @@ All data is local. Nothing leaves your machine. `.brela/` is gitignored automati
 ## Development
 
 ```bash
-git clone https://github.com/kaustubhsaxena/brela
+git clone https://github.com/kaustubh03/brela
 cd brela
 npm install
 npm run build

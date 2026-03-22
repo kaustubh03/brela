@@ -12,10 +12,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/kaustubhsaxena/brela",
+    "url": "https://github.com/kaustubh03/brela",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/kaustubhsaxena/brela#readme",
+  "homepage": "https://github.com/kaustubh03/brela#readme",
   "keywords": ["ai", "attribution", "copilot", "claude", "cursor", "governance"],
   "scripts": {
     "build": "tsc",

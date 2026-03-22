@@ -1,6 +1,6 @@
 # @brela-dev/cli
 
-CLI for [Brela](https://github.com/kaustubhsaxena/brela) — set up AI code attribution in any project with one command.
+CLI for [Brela](https://github.com/kaustubh03/brela) — set up AI code attribution in any project with one command.
 
 Brela runs silently in the background and tracks which AI tools wrote which lines: GitHub Copilot, Claude Code, Cursor, Windsurf, Cline, Aider, Continue, and more. All data stays local — nothing leaves your machine.
 
@@ -87,4 +87,4 @@ All data is local to your project under `.brela/` (gitignored automatically):
 
 ## Part of Brela
 
-See the [root repo](https://github.com/kaustubhsaxena/brela) for the VS Code extension and full documentation.
+See the [root repo](https://github.com/kaustubh03/brela) for the VS Code extension and full documentation.
