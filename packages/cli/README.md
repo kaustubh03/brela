@@ -1,95 +1,90 @@
-# Phantom — Silent AI Code Attribution
+# @brela-dev/cli
 
-Know exactly how much of your codebase was written by AI.
+CLI for [Brela](https://github.com/kaustubhsaxena/brela) — set up AI code attribution in any project with one command.
 
-Engineering teams increasingly rely on Copilot, Claude Code, and Cursor — but there is no neutral record of which code was AI-generated, by whom, and whether it was reviewed. Phantom runs silently in the background, captures that attribution at the moment code is inserted, and produces governance-ready reports without sending any data off your machine.
-
----
+Brela runs silently in the background and tracks which AI tools wrote which lines: GitHub Copilot, Claude Code, Cursor, Windsurf, Cline, Aider, Continue, and more. All data stays local — nothing leaves your machine.
 
 ## Install
 
 ```bash
-npx phantom init
+npm install -g @brela-dev/cli
 ```
 
-This installs shell wrappers for `claude` and `gh copilot`, writes `pre-commit` and `post-commit` git hooks into `.git/hooks/`, and creates a `.phantom/` directory in your project (gitignored automatically).
+## Commands
 
----
+### `brela init`
 
-## Usage
-
-### Set up a project
+One-command project setup. Run once in your project root:
 
 ```bash
 cd your-repo
-npx phantom init
-# Restart your terminal or: source ~/.zshrc
+brela init
 ```
 
-### Start the background watcher (optional, for shell-level tracking)
+What it does:
+- Adds shell wrappers to `.zshrc` / `.bashrc` so `claude` and `gh copilot` log intent before running
+- Installs the `brela-vscode` VS Code extension
+- Starts the background daemon that watches for agent file writes
+- Creates `.brela/` session directory and git pre-commit hook
+
+### `brela report`
+
+Print an AI attribution breakdown:
 
 ```bash
-npx phantom daemon start   # runs detached, PID in .phantom/daemon.pid
-npx phantom daemon stop
+brela report              # today
+brela report --days 7     # last 7 days
+brela report --from 2024-01-01 --to 2024-01-31
 ```
 
-### Generate a report
+### `brela explain <file>`
+
+Full attribution history for a specific file:
 
 ```bash
-# HTML report (default, opens in any browser — no server needed)
-npx phantom report
-
-# Analyse last 7 days, write to a specific path
-npx phantom report --days 7 --output ./ai-report.html
-
-# Machine-readable JSON to stdout
-npx phantom report --format json
-
-# Analyse a different repo
-npx phantom report --repo /path/to/other-repo
+brela explain src/utils/api.ts
+brela explain src/utils/api.ts --days 30
+brela explain src/utils/api.ts --json
+brela explain src/utils/api.ts --since 2026-03-01
 ```
 
-### Manage git hooks manually
+Shows:
+- Attribution summary (tools, events, chars inserted)
+- Timeline of every AI event in that file
+- Risk assessment (unreviewed AI sections, test coverage)
+
+### `brela daemon`
+
+Control the background file-watcher daemon:
 
 ```bash
-npx phantom hook install     # idempotent — safe to run multiple times
-npx phantom hook uninstall   # removes only Phantom's sections, leaves other hooks intact
+brela daemon start
+brela daemon stop
+brela daemon status
 ```
 
----
+Started automatically by `brela init`.
 
-## How it works
+### `brela hook`
 
-- **IDE detection** — the VS Code extension watches `onDidChangeTextDocument` for large multi-line insertions and correlates them with active AI extensions (Copilot, Cursor, Codeium). Each detection is written to `.phantom/sessions/YYYY-MM-DD.json` as a newline-delimited JSON entry.
+Manually install or uninstall git hooks:
 
-- **Shell detection** — `phantom init` wraps the `claude` and `gh copilot` commands in your shell. Every time you invoke them, a shell intent is logged to `.phantom/shell-intents.jsonl`. The background daemon correlates file changes within 30 seconds of an intent with the tool that triggered them.
+```bash
+brela hook install
+brela hook uninstall
+```
 
-- **Commit attribution** — the pre-commit hook checks staged files against today's session data and writes a `{ commitHash, files, tools }` record to `.phantom/commits.jsonl`. The post-commit hook fills in the real commit hash.
+## Session data
 
----
+All data is local to your project under `.brela/` (gitignored automatically):
 
-## Privacy
+```
+.brela/
+  sessions/            # NDJSON attribution log, one file per day
+  shell-intents.jsonl  # written by shell wrappers before AI CLI runs
+  daemon.pid
+```
 
-All data stays local. Nothing leaves your machine. `.phantom/` is gitignored by default — attribution logs, session data, and PID files are never committed.
+## Part of Brela
 
----
-
-## Contributing
-
-1. Clone the repo: `git clone https://github.com/your-org/phantom`
-2. Install dependencies: `npm install`
-3. Build all packages: `npm run build`
-4. Run unit tests: `npm run test:unit`
-5. Run end-to-end tests: `npm run test:e2e`
-6. Typecheck: `npm run typecheck`
-
-The monorepo is structured as npm workspaces:
-
-| Package | Purpose |
-|---|---|
-| `packages/core` | Data model, SidecarWriter, SessionManager |
-| `packages/cli` | `phantom` CLI (init, report, hook, daemon) |
-| `packages/daemon` | Background file watcher (chokidar) |
-| `packages/vscode-extension` | Silent VS Code extension |
-
-All code is TypeScript strict mode. PRs welcome.
+See the [root repo](https://github.com/kaustubhsaxena/brela) for the VS Code extension and full documentation.

@@ -1,5 +1,5 @@
-import { SidecarWriter, SessionManager } from '@brela/core';
-import type { AttributionEntry } from '@brela/core';
+import { SidecarWriter, SessionManager } from '@brela-dev/core';
+import type { AttributionEntry } from '@brela-dev/core';
 import type { DetectionResult } from './detector.js';
 
 const DEBUG = process.env['BRELA_DEBUG'] === '1';

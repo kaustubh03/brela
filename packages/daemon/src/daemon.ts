@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import chokidar from 'chokidar';
-import { SidecarWriter, SessionManager, AITool, DetectionMethod } from '@brela/core';
-import type { AttributionEntry } from '@brela/core';
+import { SidecarWriter, SessionManager, AITool, DetectionMethod } from '@brela-dev/core';
+import type { AttributionEntry } from '@brela-dev/core';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
