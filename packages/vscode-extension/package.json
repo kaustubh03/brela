@@ -6,9 +6,11 @@
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kaustubhsaxena/brela"
+    "url": "https://github.com/kaustubh03/brela"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "version": "0.1.0",
   "main": "./dist/extension.js",
   "engines": {

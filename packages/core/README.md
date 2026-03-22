@@ -1,6 +1,6 @@
 # @brela-dev/core
 
-Shared types and session I/O for the [Brela](https://github.com/kaustubhsaxena/brela) AI attribution system.
+Shared types and session I/O for the [Brela](https://github.com/kaustubh03/brela) AI attribution system.
 
 ## Install
 

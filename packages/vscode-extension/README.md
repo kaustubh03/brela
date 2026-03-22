@@ -50,4 +50,4 @@ Attributions are written to `.brela/sessions/YYYY-MM-DD.json` in your workspace 
 
 ## Part of Brela
 
-See the [root repo](https://github.com/kaustubhsaxena/brela) for the CLI, core types, and full documentation.
+See the [root repo](https://github.com/kaustubh03/brela) for the CLI, core types, and full documentation.
