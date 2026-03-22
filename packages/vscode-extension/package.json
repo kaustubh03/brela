@@ -1,0 +1,37 @@
+{
+  "name": "brela-vscode",
+  "displayName": "Brela — AI Attribution",
+  "publisher": "brela",
+  "description": "Silent AI code attribution — tracks which AI tools wrote which lines",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kaustubhsaxena/brela"
+  },
+  "categories": ["Other"],
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "main": "./dist/extension.js",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=20"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {},
+  "scripts": {
+    "build": "node esbuild.js",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "watch": "node esbuild.js --watch"
+  },
+  "dependencies": {
+    "@brela/core": "*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.27.4"
+  },
+  "license": "MIT"
+}

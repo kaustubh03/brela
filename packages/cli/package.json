@@ -1,0 +1,32 @@
+{
+  "name": "brela",
+  "version": "0.1.0-alpha.1",
+  "description": "Silent AI code attribution and governance tool for engineering teams",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "brela": "./dist/index.js"
+  },
+  "keywords": [
+    "ai",
+    "attribution",
+    "governance",
+    "copilot",
+    "claude",
+    "cursor",
+    "git"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@brela/core": "^0.1.0-alpha.1",
+    "chart.js": "^4.5.1",
+    "commander": "^12.0.0",
+    "simple-git": "^3.33.0"
+  }
+}

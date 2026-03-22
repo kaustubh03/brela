@@ -1,0 +1,17 @@
+{
+  "name": "@brela/daemon",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/daemon.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@brela/core": "*",
+    "chokidar": "^5.0.0"
+  },
+  "license": "MIT"
+}
