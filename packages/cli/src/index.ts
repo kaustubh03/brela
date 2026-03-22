@@ -4,6 +4,7 @@ import { initCommand } from './commands/init.js';
 import { daemonCommand } from './commands/daemon-cmd.js';
 import { hookCommand } from './commands/hook.js';
 import { reportCommand } from './commands/report.js';
+import { explainCommand } from './commands/explain.js';
 import { BrelaExit } from './errors.js';
 
 const program = new Command();
@@ -19,6 +20,7 @@ program.addCommand(initCommand());
 program.addCommand(daemonCommand());
 program.addCommand(hookCommand());
 program.addCommand(reportCommand());
+program.addCommand(explainCommand());
 
 if (!process.argv.slice(2).length) {
   program.outputHelp();

@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { TextDocumentChangeEvent } from 'vscode';
 import { extensions } from 'vscode';
-import { AITool, DetectionMethod } from '@brela/core';
+import { AITool, DetectionMethod } from '@brela-dev/core';
 
 export interface DetectionResult {
   tool: AITool;

@@ -27,7 +27,7 @@
     "watch": "node esbuild.js --watch"
   },
   "dependencies": {
-    "@brela/core": "*"
+    "@brela-dev/core": "*"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",

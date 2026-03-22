@@ -1,5 +1,5 @@
 {
-  "name": "brela",
+  "name": "@brela-dev/cli",
   "version": "0.1.0-alpha.1",
   "description": "Silent AI code attribution and governance tool for engineering teams",
   "license": "MIT",
@@ -17,6 +17,16 @@
     "cursor",
     "git"
   ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kaustubhsaxena/brela",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://brela.dev",
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
@@ -24,7 +34,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@brela/core": "^0.1.0-alpha.1",
+    "@brela-dev/core": "^0.1.0-alpha.1",
     "chart.js": "^4.5.1",
     "commander": "^12.0.0",
     "simple-git": "^3.33.0"

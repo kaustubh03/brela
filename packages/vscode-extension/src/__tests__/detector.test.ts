@@ -23,7 +23,7 @@ vi.mock('vscode', () => ({
 }));
 
 // ── Subjects under test (imported AFTER mock is declared) ────────────────────
-import { AITool, DetectionMethod } from '@brela/core';
+import { AITool, DetectionMethod } from '@brela-dev/core';
 import { InsertionDetector, readLatestSnapshotFiles } from '../detector.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

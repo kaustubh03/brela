@@ -3,8 +3,8 @@ import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { simpleGit } from 'simple-git';
-import { DetectionMethod, AITool } from '@brela/core';
-import type { AttributionEntry } from '@brela/core';
+import { DetectionMethod, AITool } from '@brela-dev/core';
+import type { AttributionEntry } from '@brela-dev/core';
 import { BrelaExit, logError } from '../errors.js';
 
 const _require = createRequire(import.meta.url);

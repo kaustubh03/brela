@@ -1,5 +1,5 @@
 {
-  "name": "@brela/daemon",
+  "name": "@brela-dev/daemon",
   "version": "0.1.0-alpha.1",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@brela/core": "*",
+    "@brela-dev/core": "*",
     "chokidar": "^5.0.0"
   },
   "license": "MIT"
