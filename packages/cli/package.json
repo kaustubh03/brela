@@ -1,6 +1,6 @@
 {
   "name": "@brela-dev/cli",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Silent AI code attribution and governance tool for engineering teams",
   "license": "MIT",
   "type": "module",

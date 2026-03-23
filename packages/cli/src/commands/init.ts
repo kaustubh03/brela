@@ -167,13 +167,35 @@ interface StepResult {
 const MARKETPLACE_URL = 'https://marketplace.visualstudio.com/items?itemName=brela.brela-vscode';
 const EXTENSION_ID    = 'brela.brela-vscode';
 
-function isCodeCliAvailable(): boolean {
-  const result = spawnSync('which', ['code'], { encoding: 'utf8' });
-  return result.status === 0 && result.stdout.trim().length > 0;
+// Known paths for the VS Code CLI on macOS/Linux
+const CODE_CLI_CANDIDATES = [
+  'code',
+  '/usr/local/bin/code',
+  '/usr/bin/code',
+  `${os.homedir()}/.local/bin/code`,
+  '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code',
+  `${os.homedir()}/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code`,
+];
+
+function findCodeCli(): string | null {
+  for (const candidate of CODE_CLI_CANDIDATES) {
+    // For absolute paths, check file existence first (fast)
+    if (candidate.startsWith('/') || candidate.startsWith(os.homedir())) {
+      if (!fs.existsSync(candidate)) continue;
+    }
+    const result = spawnSync(candidate, ['--version'], {
+      encoding: 'utf8',
+      env: process.env,
+    });
+    if (result.status === 0) return candidate;
+  }
+  return null;
 }
 
 function installVsCodeExtension(): StepResult {
-  if (!isCodeCliAvailable()) {
+  const codeCli = findCodeCli();
+
+  if (!codeCli) {
     return {
       label: 'VS Code extension',
       ok: false,
@@ -182,14 +204,18 @@ function installVsCodeExtension(): StepResult {
   }
 
   // Check if already installed
-  const check = spawnSync('code', ['--list-extensions'], { encoding: 'utf8' });
+  const check = spawnSync(codeCli, ['--list-extensions'], {
+    encoding: 'utf8',
+    env: process.env,
+  });
   if (check.stdout?.toLowerCase().includes('brela.brela-vscode')) {
     return { label: 'VS Code extension already installed', ok: true };
   }
 
   // Install directly from Marketplace — works for any end user
-  const result = spawnSync('code', ['--install-extension', EXTENSION_ID], {
+  const result = spawnSync(codeCli, ['--install-extension', EXTENSION_ID], {
     encoding: 'utf8',
+    env: process.env,
   });
 
   if (result.status === 0) {
