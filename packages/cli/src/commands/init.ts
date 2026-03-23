@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { installGitHooks } from './hook.js';
 import { BrelaExit } from '../errors.js';
@@ -163,25 +164,8 @@ interface StepResult {
   note?: string;
 }
 
-/**
- * Resolve the path to the bundled .vsix relative to this compiled file.
- * Layout: packages/cli/dist/commands/init.js
- *   → ../../../../vscode-extension  →  packages/vscode-extension/
- */
-function findVsix(): string | null {
-  try {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const vsixDir = path.resolve(here, '..', '..', '..', 'vscode-extension');
-    if (!fs.existsSync(vsixDir)) return null;
-    const files = fs.readdirSync(vsixDir).filter((f) => f.endsWith('.vsix'));
-    if (files.length === 0) return null;
-    // Pick the newest one if multiple exist
-    files.sort().reverse();
-    return path.join(vsixDir, files[0]!);
-  } catch {
-    return null;
-  }
-}
+const MARKETPLACE_URL = 'https://marketplace.visualstudio.com/items?itemName=brela.brela-vscode';
+const EXTENSION_ID    = 'brela.brela-vscode';
 
 function isCodeCliAvailable(): boolean {
   const result = spawnSync('which', ['code'], { encoding: 'utf8' });
@@ -193,36 +177,45 @@ function installVsCodeExtension(): StepResult {
     return {
       label: 'VS Code extension',
       ok: false,
-      note: 'install manually: https://marketplace.visualstudio.com/items?itemName=brela-ai.brela',
+      note: `VS Code CLI not found — install from: ${MARKETPLACE_URL}`,
     };
   }
 
-  const vsixPath = findVsix();
-  if (vsixPath === null) {
-    return {
-      label: 'VS Code extension',
-      ok: false,
-      note: 'run "vsce package" in packages/vscode-extension, then re-run brela init',
-    };
+  // Check if already installed
+  const check = spawnSync('code', ['--list-extensions'], { encoding: 'utf8' });
+  if (check.stdout?.toLowerCase().includes('brela.brela-vscode')) {
+    return { label: 'VS Code extension already installed', ok: true };
   }
 
-  const result = spawnSync('code', ['--install-extension', vsixPath], {
+  // Install directly from Marketplace — works for any end user
+  const result = spawnSync('code', ['--install-extension', EXTENSION_ID], {
     encoding: 'utf8',
   });
 
-  if (result.status !== 0) {
-    const reason = (result.stderr ?? '').trim().split('\n')[0] ?? 'unknown error';
-    return { label: 'VS Code extension', ok: false, note: reason };
+  if (result.status === 0) {
+    return { label: 'VS Code extension installed', ok: true };
   }
 
-  return { label: 'VS Code extension installed', ok: true };
+  // Marketplace install failed — guide user
+  return {
+    label: 'VS Code extension',
+    ok: false,
+    note: `install from: ${MARKETPLACE_URL}`,
+  };
 }
 
 // ── Daemon launch ────────────────────────────────────────────────────────────
 
 function daemonScriptPath(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(here, '..', '..', '..', 'daemon', 'dist', 'daemon.js');
+  try {
+    // When installed via npm, resolve daemon from node_modules
+    const req = createRequire(import.meta.url);
+    return req.resolve('@brela-dev/daemon');
+  } catch {
+    // Monorepo dev fallback
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    return path.resolve(here, '..', '..', '..', 'daemon', 'dist', 'daemon.js');
+  }
 }
 
 function pidPath(projectRoot: string): string {
@@ -245,7 +238,7 @@ function launchDaemon(projectRoot: string): StepResult {
     return {
       label: 'Daemon',
       ok: false,
-      note: 'daemon not built — run "npm run build" in packages/daemon',
+      note: 'could not locate daemon — try reinstalling: npm install -g @brela-dev/cli',
     };
   }
 
