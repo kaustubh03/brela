@@ -247,26 +247,8 @@ export async function computeMetrics(projectRoot: string, days: number): Promise
   const brelaCommits = readCommitsJsonl(brelaDir);
   const gitData = await readGitData(projectRoot, fromDate);
 
-  // ── Backfill from git trailers ─────────────────────────────────────────────
-  const sessionKeys = new Set(
-    sessionEntries.map(e => `${toDateStr(new Date(e.timestamp))}|${e.file}`)
-  );
-  const backfillEntries: AttributionEntry[] = gitData.trailerEntries.flatMap(te =>
-    te.files.map(file => ({
-      file,
-      tool: te.tool,
-      confidence: 'high' as const,
-      detectionMethod: DetectionMethod.CO_AUTHOR_TRAILER,
-      linesStart: 0,
-      linesEnd: Math.floor(te.linesAdded / Math.max(te.files.length, 1)),
-      charsInserted: 0,
-      timestamp: `${te.date}T00:00:00Z`,
-      sessionId: 'git-trailer',
-      accepted: true,
-    }))
-  ).filter(e => !sessionKeys.has(`${toDateStr(new Date(e.timestamp))}|${e.file}`));
-
-  const allEntries = [...sessionEntries, ...backfillEntries];
+  const backfillEntries: AttributionEntry[] = [];
+  const allEntries = [...sessionEntries];
 
   // ── Aggregate per-file and per-tool ───────────────────────────────────────
   const fileMap = new Map<string, { aiLines: number; tools: Map<string, number> }>();
@@ -438,9 +420,7 @@ function generateHtml(m: ReportMetrics, chartJs: string): string {
     </div>
   </div>`).join('\n');
 
-  const backfillNote = m.backfillCount > 0
-    ? `<p style="font-size:12px;color:#6B7280;margin-top:12px">${m.backfillCount} entries backfilled from git co-author trailers (confidence: high).</p>`
-    : '';
+  const backfillNote = '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -796,9 +776,7 @@ export function reportCommand(): Command {
         if (metrics.insufficientData) {
           console.log('  ⚠  Less than 3 days of data — results may not be representative.');
         }
-        if (metrics.backfillCount > 0) {
-          console.log(`  ↩  ${metrics.backfillCount} entries backfilled from git co-author trailers.`);
-        }
+
         if (metrics.unreviewedAiCommits.length > 0) {
           console.log(`  ⚑  ${metrics.unreviewedAiCommits.length} unreviewed commits with >60% AI attribution.`);
         }
