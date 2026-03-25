@@ -34,8 +34,10 @@ interface ShellIntent {
 }
 
 function toolFromIntent(intentTool: string): AITool {
-  if (intentTool === 'claude-code') return AITool.CLAUDE_CODE;
-  if (intentTool === 'copilot-cli') return AITool.COPILOT;
+  if (intentTool === 'claude-code') return AITool.CLAUDE_CODE_AGENT;
+  if (intentTool === 'copilot-cli') return AITool.COPILOT_CLI;
+  if (intentTool === 'aider')       return AITool.AIDER;
+  if (intentTool === 'continue')    return AITool.CONTINUE;
   return AITool.UNKNOWN;
 }
 

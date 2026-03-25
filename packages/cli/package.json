@@ -1,6 +1,6 @@
 {
   "name": "@brela-dev/cli",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.5",
   "description": "Silent AI code attribution and governance tool for engineering teams",
   "license": "MIT",
   "type": "module",
@@ -34,7 +34,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@brela-dev/core": "^0.1.0-alpha.1",
+    "@brela-dev/core": "^0.1.4",
+    "@brela-dev/daemon": "^0.1.4",
     "chart.js": "^4.5.1",
     "commander": "^12.0.0",
     "simple-git": "^3.33.0"

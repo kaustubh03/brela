@@ -1,6 +1,6 @@
 {
   "name": "@brela-dev/core",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.4",
   "description": "Shared types and session writer for the Brela AI attribution system",
   "license": "MIT",
   "type": "module",
@@ -16,14 +16,7 @@
     "directory": "packages/core"
   },
   "homepage": "https://github.com/kaustubh03/brela#readme",
-  "keywords": [
-    "ai",
-    "attribution",
-    "copilot",
-    "claude",
-    "cursor",
-    "governance"
-  ],
+  "keywords": ["ai", "attribution", "copilot", "claude", "cursor", "governance"],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",

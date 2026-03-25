@@ -6,11 +6,13 @@
     "packages/core",
     "packages/cli",
     "packages/vscode-extension",
-    "packages/daemon"
+    "packages/daemon",
+    "packages/api"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
     "dev:cli": "npm run dev --workspace=packages/cli",
+    "dev:api": "npm run dev --workspace=packages/api",
     "typecheck": "npm run typecheck --workspaces",
     "test:unit": "vitest run packages/core/src/__tests__/ packages/vscode-extension/src/__tests__/",
     "test:e2e": "npm run build && tsc -p tests/tsconfig.json && node --test tests/dist/e2e/full-flow.test.js",
