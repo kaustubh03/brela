@@ -24,6 +24,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "nanoid": "^5.1.7"
+    "better-sqlite3": "^11.9.1",
+    "nanoid": "^5.1.7",
+    "simple-git": "^3.33.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
   }
 }

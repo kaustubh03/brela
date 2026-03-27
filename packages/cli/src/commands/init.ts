@@ -23,47 +23,81 @@ const SKIP  = `${DIM}–${RESET}`;
 // ── Shell hook source blocks ────────────────────────────────────────────────
 
 const BASH_ZSH_BLOCK = `
-brela_log_intent() {
-  echo "{\\"tool\\":\\"$1\\",\\"args\\":\\"$2\\",\\"timestamp\\":\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\",\\"pwd\\":\\"$PWD\\"}" >> "$PWD/.brela/shell-intents.jsonl" 2>/dev/null
+# Record a completed AI session: touch a marker before, find changed files after.
+# _brela_session <log-name> <binary> [args...]
+# Uses $$ (shell PID) for a unique marker so concurrent sessions don't collide.
+_brela_session() {
+  local _logname="$1"; local _bin="$2"; shift 2
+  local _args="$*"
+  local _mark="$PWD/.brela/.mark-$$"
+  mkdir -p "$PWD/.brela" 2>/dev/null
+  touch "$_mark" 2>/dev/null
+  command "$_bin" "$@"
+  local _changed
+  _changed=$(find "$PWD" -newer "$_mark" -type f \\
+    -not -path "*/.brela/*" -not -path "*/.git/*" -not -path "*/node_modules/*" \\
+    2>/dev/null | tr '\\n' '|')
+  echo "{\\"tool\\":\\"$_logname\\",\\"args\\":\\"$_args\\",\\"timestamp\\":\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\",\\"pwd\\":\\"$PWD\\",\\"changedFiles\\":\\"$_changed\\"}" \\
+    >> "$PWD/.brela/shell-sessions.jsonl" 2>/dev/null
+  rm -f "$_mark" 2>/dev/null
 }
-brela_snapshot() {
-  git -C "$PWD" diff --name-only HEAD 2>/dev/null >> "$PWD/.brela/snapshot-$(date +%s).txt" 2>/dev/null
-}
-claude() { brela_log_intent "claude-code" "$*"; command claude "$@"; brela_snapshot; }
+claude() { _brela_session claude-code claude "$@"; }
+aider()  { _brela_session aider aider "$@"; }
 
-# Copilot CLI
+# Copilot CLI (no file writes — just log the intent)
 gh() {
-  if [ "$1" = "copilot" ]; then brela_log_intent "copilot-cli" "$*"; fi
-  command gh "$@"
-  if [ "$1" = "copilot" ]; then brela_snapshot; fi
+  if [ "$1" = "copilot" ]; then
+    local _mark="$PWD/.brela/.mark-$$"
+    mkdir -p "$PWD/.brela" 2>/dev/null
+    touch "$_mark" 2>/dev/null
+    command gh "$@"
+    local _changed
+    _changed=$(find "$PWD" -newer "$_mark" -type f \\
+      -not -path "*/.brela/*" -not -path "*/.git/*" -not -path "*/node_modules/*" \\
+      2>/dev/null | tr '\\n' '|')
+    echo "{\\"tool\\":\\"copilot-cli\\",\\"args\\":\\"$*\\",\\"timestamp\\":\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\",\\"pwd\\":\\"$PWD\\",\\"changedFiles\\":\\"$_changed\\"}" \\
+      >> "$PWD/.brela/shell-sessions.jsonl" 2>/dev/null
+    rm -f "$_mark" 2>/dev/null
+  else
+    command gh "$@"
+  fi
 }
 `.trimStart();
 
 const FISH_BLOCK = `
-function brela_log_intent
+function _brela_session
   set -l tool $argv[1]
   set -l args (string join " " $argv[2..-1])
-  set -l timestamp (date -u +%Y-%m-%dT%H:%M:%SZ)
-  echo "{\\"tool\\":\\"$tool\\",\\"args\\":\\"$args\\",\\"timestamp\\":\\"$timestamp\\",\\"pwd\\":\\"$PWD\\"}" >> "$PWD/.brela/shell-intents.jsonl" 2>/dev/null
-end
-
-function brela_snapshot
-  git -C "$PWD" diff --name-only HEAD 2>/dev/null >> "$PWD/.brela/snapshot-(date +%s).txt" 2>/dev/null
+  set -l mark "$PWD/.brela/.mark-$fish_pid"
+  mkdir -p "$PWD/.brela" 2>/dev/null
+  touch $mark 2>/dev/null
+  command $tool $args
+  set -l changed (find "$PWD" -newer $mark -type f -not -path "*/.brela/*" -not -path "*/.git/*" -not -path "*/node_modules/*" 2>/dev/null | string join "|")
+  set -l ts (date -u +%Y-%m-%dT%H:%M:%SZ)
+  echo "{\\"tool\\":\\"$tool\\",\\"args\\":\\"$args\\",\\"timestamp\\":\\"$ts\\",\\"pwd\\":\\"$PWD\\",\\"changedFiles\\":\\"$changed\\"}" >> "$PWD/.brela/shell-sessions.jsonl" 2>/dev/null
+  rm -f $mark 2>/dev/null
 end
 
 function claude
-  brela_log_intent "claude-code" $argv
-  command claude $argv
-  brela_snapshot
+  _brela_session claude-code $argv
+end
+
+function aider
+  _brela_session aider $argv
 end
 
 function gh
   if test "$argv[1]" = "copilot"
-    brela_log_intent "copilot-cli" $argv
-  end
-  command gh $argv
-  if test "$argv[1]" = "copilot"
-    brela_snapshot
+    set -l mark "$PWD/.brela/.mark-$fish_pid"
+    mkdir -p "$PWD/.brela" 2>/dev/null
+    touch $mark 2>/dev/null
+    command gh $argv
+    set -l changed (find "$PWD" -newer $mark -type f -not -path "*/.brela/*" -not -path "*/.git/*" -not -path "*/node_modules/*" 2>/dev/null | string join "|")
+    set -l ts (date -u +%Y-%m-%dT%H:%M:%SZ)
+    echo "{\\"tool\\":\\"copilot-cli\\",\\"args\\":\\"(string join \\" \\" $argv)\\",\\"timestamp\\":\\"$ts\\",\\"pwd\\":\\"$PWD\\",\\"changedFiles\\":\\"$changed\\"}" >> "$PWD/.brela/shell-sessions.jsonl" 2>/dev/null
+    rm -f $mark 2>/dev/null
+  else
+    command gh $argv
   end
 end
 `.trimStart();
@@ -147,11 +181,15 @@ function bootstrapBrelaDir(projectRoot: string): void {
     fs.writeFileSync(gitignorePath, '*\n', 'utf8');
   }
 
-  // Pre-create sessions dir and shell-intents file so they exist immediately
+  // Pre-create sessions dir and sidecar files so they exist immediately
   fs.mkdirSync(path.join(brelaDir, 'sessions'), { recursive: true });
   const intentsPath = path.join(brelaDir, 'shell-intents.jsonl');
   if (!fs.existsSync(intentsPath)) {
     fs.writeFileSync(intentsPath, '', 'utf8');
+  }
+  const shellSessionsPath = path.join(brelaDir, 'shell-sessions.jsonl');
+  if (!fs.existsSync(shellSessionsPath)) {
+    fs.writeFileSync(shellSessionsPath, '', 'utf8');
   }
 }
 

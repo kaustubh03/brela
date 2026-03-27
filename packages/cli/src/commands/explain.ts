@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Command } from 'commander';
 import { simpleGit } from 'simple-git';
-import { SidecarWriter, AITool } from '@brela-dev/core';
+import { SidecarWriter, AITool, ModelResolver } from '@brela-dev/core';
 import type { AttributionEntry } from '@brela-dev/core';
 import { BrelaExit, logError } from '../errors.js';
 
@@ -182,8 +182,10 @@ interface ExplainJson {
   timeline: Array<{
     timestamp: string;
     tool: string;
+    model: string | null;
     linesStart: number;
     linesEnd: number;
+    lineRanges: Array<{ start: number; end: number }> | null;
     confidence: string;
     detectionMethod: string;
     charsInserted: number;
@@ -261,6 +263,19 @@ async function runExplain(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
 
+  // 7b. Re-resolve missing models using the CLI's full ModelResolver (has SQLite access).
+  // Skip Copilot tools — model detection for Copilot is unreliable (reads VS Code state,
+  // not per-completion data), so we hide it rather than show a potentially wrong value.
+  const cliResolver = new ModelResolver();
+  for (const entry of entries) {
+    if (entry.tool.startsWith('COPILOT')) {
+      entry.model = undefined;
+    } else if (!entry.model) {
+      const resolved = cliResolver.resolve(entry.tool);
+      if (resolved !== 'unknown') entry.model = resolved;
+    }
+  }
+
   // 8. No data case
   if (entries.length === 0) {
     if (opts.json) {
@@ -294,10 +309,16 @@ async function runExplain(
     confCounts[e.confidence] = (confCounts[e.confidence] ?? 0) + 1;
   }
 
-  // Deduplicate + collect line ranges
-  const ranges: Array<[number, number]> = entries
-    .filter((e) => e.linesStart > 0 || e.linesEnd > 0)
-    .map((e) => [e.linesStart, e.linesEnd] as [number, number]);
+  // Collect precise line ranges (from daemon diff) or fall back to linesStart/linesEnd
+  const ranges: Array<[number, number]> = entries.flatMap((e) => {
+    if (e.lineRanges && e.lineRanges.length > 0) {
+      return e.lineRanges.map((r) => [r.start, r.end] as [number, number]);
+    }
+    if (e.linesStart > 0 || e.linesEnd > 0) {
+      return [[e.linesStart, e.linesEnd] as [number, number]];
+    }
+    return [];
+  });
 
   // 10. Risk signals
   const reviewInfo = await getReviewInfo(projectRoot, relFile);
@@ -330,8 +351,10 @@ async function runExplain(
       timeline: entries.map((e) => ({
         timestamp: e.timestamp,
         tool: e.tool,
+        model: e.model ?? null,
         linesStart: e.linesStart,
         linesEnd: e.linesEnd,
+        lineRanges: e.lineRanges ?? null,
         confidence: e.confidence,
         detectionMethod: e.detectionMethod,
         charsInserted: e.charsInserted,
@@ -375,23 +398,53 @@ async function runExplain(
       (ranges.length > 5 ? ` +${ranges.length - 5} more` : '')
     : 'n/a';
 
+  // Collect distinct models, excluding 'unknown' and missing (old entries)
+  const modelSet = new Set(
+    entries.map((e) => e.model).filter((m): m is string => !!m && m !== 'unknown'),
+  );
+  const modelSummary = modelSet.size > 0 ? [...modelSet].join(', ') : null;
+
   const summaryLines = [
     `AI-assisted insertions:  ${bold(String(entries.length))} events`,
     `Total AI chars inserted: ${bold(totalChars.toLocaleString())}`,
     `Tools detected:          ${toolSummary}`,
+    ...(modelSummary ? [`Models used:             ${bold(modelSummary)}`] : []),
     `Confidence:              ${confSummary}`,
     `Lines attributed:        ${rangeStr}`,
   ];
   process.stdout.write(box('Attribution Summary', summaryLines) + '\n\n');
 
   // ── Timeline box ─────────────────────────────────────────────────────────
-  const timelineLines = entries.slice(0, 10).map((e) => {
+  const timelineLines = entries.slice(0, 10).flatMap((e) => {
     const date = e.timestamp.slice(0, 10);
     const time = e.timestamp.slice(11, 16);
     const toolStr = toolColour(e.tool)(label(e.tool).padEnd(18));
-    const lineStr = e.linesEnd > 0 ? `L${e.linesStart}-${e.linesEnd}` : 'n/a';
+    let lineStr: string;
+    if (e.lineRanges && e.lineRanges.length > 0) {
+      const shown = e.lineRanges.slice(0, 2).map((r) => r.start === r.end ? `L${r.start}` : `L${r.start}-${r.end}`);
+      lineStr = shown.join(', ') + (e.lineRanges.length > 2 ? ` +${e.lineRanges.length - 2}` : '');
+    } else {
+      lineStr = e.linesEnd > 0 ? `L${e.linesStart}-${e.linesEnd}` : 'n/a';
+    }
     const conf = e.confidence === 'high' ? 'HIGH' : e.confidence === 'medium' ? 'MED ' : 'LOW ';
-    return `${dim(date + ' ' + time)}  ${confidenceDot(e.confidence)} ${toolStr}  ${lineStr.padEnd(10)}  ${conf}`;
+    const modelTag = e.model && e.model !== 'unknown' ? dim(` [${e.model}]`) : '';
+    const mainLine = `${dim(date + ' ' + time)}  ${confidenceDot(e.confidence)} ${toolStr}  ${lineStr.padEnd(12)}  ${conf}${modelTag}`;
+
+    // Inline code snippets — only appear when captureCode is enabled in .brela/config.json
+    const snippetLines: string[] = [];
+    if (e.lineRanges) {
+      for (const r of e.lineRanges) {
+        if (r.content === undefined) continue;
+        const codeLines = r.content.split('\n');
+        const preview   = codeLines.slice(0, 4);
+        const overflow  = codeLines.length - 4;
+        snippetLines.push(dim('     ┌─ code ─'));
+        for (const codeLine of preview) snippetLines.push(dim('     │ ') + codeLine);
+        if (overflow > 0) snippetLines.push(dim(`     │ … (${overflow} more line${overflow !== 1 ? 's' : ''})`));
+        snippetLines.push(dim('     └──────'));
+      }
+    }
+    return [mainLine, ...snippetLines];
   });
 
   if (entries.length > 10) {

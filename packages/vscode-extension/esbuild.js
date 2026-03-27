@@ -4,7 +4,7 @@ esbuild.build({
   entryPoints: ['src/extension.ts'],
   bundle: true,
   outfile: 'dist/extension.js',
-  external: ['vscode'],
+  external: ['vscode', 'better-sqlite3'],
   format: 'cjs',
   platform: 'node',
   sourcemap: true,

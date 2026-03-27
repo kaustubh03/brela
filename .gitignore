@@ -6,3 +6,4 @@ dist
 *.vsix
 .env
 .env.local
+*-report.html

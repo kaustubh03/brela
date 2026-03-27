@@ -1,4 +1,4 @@
-import { SidecarWriter, SessionManager } from '@brela-dev/core';
+import { SidecarWriter, SessionManager, ModelResolver } from '@brela-dev/core';
 import type { AttributionEntry } from '@brela-dev/core';
 import type { DetectionResult } from './detector.js';
 
@@ -7,6 +7,8 @@ const DEBUG = process.env['BRELA_DEBUG'] === '1';
 function dbg(msg: string): void {
   if (DEBUG) console.log(`[brela] ${msg}`);
 }
+
+const modelResolver = new ModelResolver();
 
 export class AttributionWriter {
   private readonly sidecar: SidecarWriter;
@@ -24,9 +26,16 @@ export class AttributionWriter {
         ? filePath.slice(projectRoot.length).replace(/^[\\/]/, '')
         : filePath;
 
+      // Resolve model from config only (no default fallback).
+      // In VS Code extension context, SQLite-based resolution may silently fail,
+      // so we store undefined rather than a potentially wrong default. brela explain
+      // re-resolves missing models at CLI time where SQLite is always available.
+      const model = modelResolver.resolveOrNull(result.tool) ?? undefined;
+
       const entry: AttributionEntry = {
         file: relFile,
         tool: result.tool,
+        model,
         confidence: result.confidence,
         detectionMethod: result.detectionMethod,
         linesStart: result.linesStart,

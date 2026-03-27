@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { simpleGit } from 'simple-git';
-import { DetectionMethod, AITool } from '@brela-dev/core';
+import { DetectionMethod, AITool, ModelResolver } from '@brela-dev/core';
 import type { AttributionEntry } from '@brela-dev/core';
 import { BrelaExit, logError } from '../errors.js';
 
@@ -50,10 +50,15 @@ export interface ReportMetrics {
   totalAiLines: number;
   totalHumanLines: number;
   perToolBreakdown: Record<string, number>;
+  perModelBreakdown: Record<string, number>;
   perFileHeatmap: Array<{
-    file: string; aiLines: number; totalLines: number; aiPct: number; topTool: string;
+    file: string; aiLines: number; totalLines: number; aiPct: number; topTool: string; topModel: string;
   }>;
   perDayTrend: Array<{ date: string; humanLines: number; aiLines: number }>;
+  perToolDayTrend: Array<{ date: string; perTool: Record<string, number> }>;
+  perDetectionMethod: Record<string, number>;
+  riskSurface: Array<{ file: string; aiPct: number; aiLines: number; topTool: string; topModel: string }>;
+  authorToolMatrix: Array<{ author: string; tools: Record<string, number>; totalLines: number }>;
   confidenceDistribution: { high: number; medium: number; low: number };
   unreviewedAiCommits: Array<{
     hash: string; shortHash: string; date: string;
@@ -167,7 +172,14 @@ async function readGitData(projectRoot: string, fromDate: Date): Promise<GitData
         if (cols.length === 3 && cols[0] !== undefined && cols[0] !== '-') {
           const added = parseInt(cols[0], 10);
           const file = cols[2] ?? '';
-          if (!isNaN(added) && added > 0 && file) {
+          // Exclude generated/binary/non-source files from line counts to avoid
+          // inflating "human lines" with lock files, reports, build artefacts, etc.
+          const isSourceFile = !/\.(html|htm|lock|sum|snap|min\.js|min\.css|pb\.go|pb\.ts|d\.ts)$/.test(file)
+            && !file.includes('node_modules/')
+            && !file.includes('dist/')
+            && !file.includes('build/')
+            && !file.endsWith('-report.html');
+          if (!isNaN(added) && added > 0 && file && isSourceFile) {
             cur.linesAdded += added;
             cur.files.push(file);
             cur.fileLines.set(file, (cur.fileLines.get(file) ?? 0) + added);
@@ -250,22 +262,46 @@ export async function computeMetrics(projectRoot: string, days: number): Promise
   const backfillEntries: AttributionEntry[] = [];
   const allEntries = [...sessionEntries];
 
+  // Re-resolve missing models at CLI time (SQLite available here; extension may
+  // have stored undefined when native module was unavailable in bundled context).
+  const cliResolver = new ModelResolver();
+  for (const entry of allEntries) {
+    if (!entry.model) {
+      const resolved = cliResolver.resolve(entry.tool);
+      if (resolved !== 'unknown') entry.model = resolved;
+    }
+  }
+
   // ── Aggregate per-file and per-tool ───────────────────────────────────────
-  const fileMap = new Map<string, { aiLines: number; tools: Map<string, number> }>();
+  const fileMap = new Map<string, { aiLines: number; tools: Map<string, number>; models: Map<string, number> }>();
   const toolTotals = new Map<string, number>();
+  const modelTotals = new Map<string, number>();
+  const methodTotals = new Map<string, number>();
   const confDist = { high: 0, medium: 0, low: 0 };
   const aiByDay = new Map<string, number>();
+  const toolByDay = new Map<string, Map<string, number>>(); // date → tool → lines
 
   for (const e of allEntries) {
     const lines = Math.max(0, e.linesEnd - e.linesStart);
     const label = toolLabel(e.tool);
+    // Copilot model resolution is unreliable (reads VS Code state, not per-completion data)
+    // so we omit it from model breakdown entirely to avoid showing misleading values.
+    const modelKey = e.tool.startsWith('COPILOT') ? 'unknown' : (e.model ?? 'unknown');
     const date = toDateStr(new Date(e.timestamp));
+    const method = e.detectionMethod ?? 'unknown';
+
+    // Model totals
+    modelTotals.set(modelKey, (modelTotals.get(modelKey) ?? 0) + lines);
+
+    // Detection method totals
+    methodTotals.set(method, (methodTotals.get(method) ?? 0) + lines);
 
     // File accumulation
-    if (!fileMap.has(e.file)) fileMap.set(e.file, { aiLines: 0, tools: new Map() });
+    if (!fileMap.has(e.file)) fileMap.set(e.file, { aiLines: 0, tools: new Map(), models: new Map() });
     const fstat = fileMap.get(e.file)!;
     fstat.aiLines += lines;
     fstat.tools.set(label, (fstat.tools.get(label) ?? 0) + lines);
+    fstat.models.set(modelKey, (fstat.models.get(modelKey) ?? 0) + lines);
 
     // Global tool totals
     toolTotals.set(label, (toolTotals.get(label) ?? 0) + lines);
@@ -275,8 +311,10 @@ export async function computeMetrics(projectRoot: string, days: number): Promise
     else if (e.confidence === 'medium') confDist.medium++;
     else confDist.low++;
 
-    // Day buckets
+    // Day buckets (total + per-tool)
     aiByDay.set(date, (aiByDay.get(date) ?? 0) + lines);
+    if (!toolByDay.has(date)) toolByDay.set(date, new Map());
+    toolByDay.get(date)!.set(label, (toolByDay.get(date)!.get(label) ?? 0) + lines);
   }
 
   const totalAiLines = [...toolTotals.values()].reduce((a, b) => a + b, 0);
@@ -291,18 +329,40 @@ export async function computeMetrics(projectRoot: string, days: number): Promise
     perToolBreakdown[t] = totalAiLines > 0 ? (n / totalAiLines) * 100 : 0;
   }
 
+  // ── Per-model breakdown (% of AI lines) ───────────────────────────────────
+  const perModelBreakdown: Record<string, number> = {};
+  for (const [m, n] of modelTotals) {
+    perModelBreakdown[m] = totalAiLines > 0 ? (n / totalAiLines) * 100 : 0;
+  }
+
+  // ── Per-detection-method breakdown (lines) ─────────────────────────────────
+  const perDetectionMethod: Record<string, number> = {};
+  for (const [method, n] of methodTotals) {
+    perDetectionMethod[method] = n;
+  }
+
   // ── Per-file heatmap (top 20 by AI%) ──────────────────────────────────────
   const perFileHeatmap = [...fileMap.entries()].map(([file, stat]) => {
     const totalLines = Math.max(gitData.perFileTotal.get(file) ?? 0, stat.aiLines);
     const topTool = [...stat.tools.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Unknown';
+    const topModelEntry = [...stat.models.entries()].sort((a, b) => b[1] - a[1])[0];
+    // Hide model for Copilot files (model detection is unreliable for Copilot)
+    const topModel = (topModelEntry && topModelEntry[0] !== 'unknown' && !topTool.startsWith('Copilot'))
+      ? topModelEntry[0] : '';
     return {
       file, aiLines: stat.aiLines, totalLines,
       aiPct: totalLines > 0 ? (stat.aiLines / totalLines) * 100 : 100,
-      topTool,
+      topTool, topModel,
     };
   }).sort((a, b) => b.aiPct - a.aiPct).slice(0, 20);
 
+  // ── Risk surface (high AI%, high volume) ──────────────────────────────────
+  const riskSurface = perFileHeatmap
+    .filter(f => f.aiPct > 80 && f.aiLines > 30)
+    .slice(0, 10);
+
   // ── Per-day trend ──────────────────────────────────────────────────────────
+  const allToolKeys = [...toolTotals.keys()];
   const perDayTrend = Array.from({ length: days }, (_, i) => {
     const d = new Date(now);
     d.setDate(d.getDate() - (days - 1 - i));
@@ -311,6 +371,42 @@ export async function computeMetrics(projectRoot: string, days: number): Promise
     const humanLines = Math.max(0, (gitData.perDayAdded.get(date) ?? 0) - aiLines);
     return { date, humanLines, aiLines };
   });
+
+  const perToolDayTrend = Array.from({ length: days }, (_, i) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() - (days - 1 - i));
+    const date = toDateStr(d);
+    const dayTools = toolByDay.get(date);
+    const perTool: Record<string, number> = {};
+    for (const t of allToolKeys) {
+      perTool[t] = dayTools?.get(t) ?? 0;
+    }
+    return { date, perTool };
+  });
+
+  // ── Author × Tool matrix ──────────────────────────────────────────────────
+  const authorMap = new Map<string, { tools: Map<string, number>; totalLines: number }>();
+  for (const commit of gitData.commits) {
+    const record = brelaCommits.find(r => r.commitHash === commit.hash);
+    if (!record) continue;
+    const author = commit.authorName || commit.authorEmail || 'Unknown';
+    if (!authorMap.has(author)) authorMap.set(author, { tools: new Map(), totalLines: 0 });
+    const astat = authorMap.get(author)!;
+    for (const f of record.files) {
+      const tl = toolLabel(f.tool);
+      const linesForFile = commit.fileLines.get(f.path) ?? 0;
+      astat.tools.set(tl, (astat.tools.get(tl) ?? 0) + linesForFile);
+      astat.totalLines += linesForFile;
+    }
+  }
+  const authorToolMatrix = [...authorMap.entries()]
+    .sort((a, b) => b[1].totalLines - a[1].totalLines)
+    .slice(0, 10)
+    .map(([author, stat]) => ({
+      author,
+      tools: Object.fromEntries(stat.tools),
+      totalLines: stat.totalLines,
+    }));
 
   // ── Unreviewed AI commits ──────────────────────────────────────────────────
   const unreviewedAiCommits: ReportMetrics['unreviewedAiCommits'] = [];
@@ -342,7 +438,8 @@ export async function computeMetrics(projectRoot: string, days: number): Promise
     projectRoot, daysAnalysed: days,
     dateFrom: toDateStr(fromDate), dateTo: toDateStr(now),
     insufficientData, aiPercentage, totalAiLines, totalHumanLines,
-    perToolBreakdown, perFileHeatmap, perDayTrend,
+    perToolBreakdown, perModelBreakdown, perFileHeatmap, perDayTrend,
+    perToolDayTrend, perDetectionMethod, riskSurface, authorToolMatrix,
     confidenceDistribution: confDist,
     unreviewedAiCommits,
     backfillCount: backfillEntries.length,
@@ -358,6 +455,21 @@ function loadChartJs(): string {
   throw new Error(`chart.umd.js not found near ${main} — run npm install`);
 }
 
+// ── Brela icon loader ─────────────────────────────────────────────────────────
+
+function loadBrelaIconBase64(): string {
+  // Try sibling packages (monorepo) then fallback to empty
+  const candidates = [
+    path.join(path.dirname(new URL(import.meta.url).pathname), '../../../../packages/vscode-extension/media/icon.png'),
+    path.join(path.dirname(new URL(import.meta.url).pathname), '../../../vscode-extension/media/icon.png'),
+    path.join(path.dirname(new URL(import.meta.url).pathname), '../../vscode-extension/media/icon.png'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return fs.readFileSync(p).toString('base64');
+  }
+  return '';
+}
+
 // ── HTML generation ───────────────────────────────────────────────────────────
 
 function pct(n: number): string { return n.toFixed(1) + '%'; }
@@ -370,7 +482,14 @@ function pctPill(p: number): string {
   return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;background:${bg};color:${fg}">${p.toFixed(1)}%</span>`;
 }
 
-function generateHtml(m: ReportMetrics, chartJs: string): string {
+function generateHtml(m: ReportMetrics, chartJs: string, iconBase64: string): string {
+  const iconDataUrl = iconBase64 ? `data:image/png;base64,${iconBase64}` : '';
+  const iconImg = iconDataUrl
+    ? `<img src="${iconDataUrl}" style="width:28px;height:28px;border-radius:6px">`
+    : `<span style="font-size:20px">👻</span>`;
+  const faviconTag = iconDataUrl
+    ? `<link rel="icon" type="image/png" href="${iconDataUrl}">`
+    : '';
   const metricsJson = JSON.stringify(m, null, 0);
   const repo        = escHtml(path.basename(m.projectRoot));
   const dateRange   = `${m.dateFrom} – ${m.dateTo}`;
@@ -392,11 +511,18 @@ function generateHtml(m: ReportMetrics, chartJs: string): string {
   // ── File heatmap rows ─────────────────────────────────────────────────────
   const heatmapRows = m.perFileHeatmap.map((f, i) => {
     const rowBg = i % 2 === 1 ? '#F9FAFB' : '#ffffff';
-    return `<tr data-pct="${f.aiPct.toFixed(2)}" data-file="${escHtml(f.file)}" data-tool="${escHtml(f.topTool)}" data-ai="${f.aiLines}" data-total="${f.totalLines}"
+    const riskBadge = f.aiPct > 80 && f.aiLines > 30
+      ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:#FEE2E2;color:#B91C1C;margin-left:6px">HIGH</span>`
+      : '';
+    const modelCell = f.topModel
+      ? `<span style="font-family:'SF Mono',Menlo,monospace;font-size:11px;color:#6B7280">${escHtml(f.topModel)}</span>`
+      : `<span style="font-size:11px;color:#D1D5DB">—</span>`;
+    return `<tr data-pct="${f.aiPct.toFixed(2)}" data-file="${escHtml(f.file)}" data-tool="${escHtml(f.topTool)}" data-ai="${f.aiLines}" data-total="${f.totalLines}" data-model="${escHtml(f.topModel)}"
          style="background:${rowBg};height:44px;border-bottom:1px solid #F3F4F6"
          onmouseover="this.style.background='#F0F9FF'" onmouseout="this.style.background='${rowBg}'">
-      <td style="padding:0 16px;font-family:'SF Mono',Menlo,monospace;font-size:12px;color:#111827;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.file)}</td>
+      <td style="padding:0 16px;font-family:'SF Mono',Menlo,monospace;font-size:12px;color:#111827;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.file)}${riskBadge}</td>
       <td style="padding:0 16px;font-size:13px;color:#6B7280">${escHtml(f.topTool)}</td>
+      <td style="padding:0 16px">${modelCell}</td>
       <td style="padding:0 16px;font-size:13px;color:#111827;text-align:right">${f.aiLines.toLocaleString()}</td>
       <td style="padding:0 16px;font-size:13px;color:#111827;text-align:right">${f.totalLines.toLocaleString()}</td>
       <td style="padding:0 16px">${pctPill(f.aiPct)}</td>
@@ -428,6 +554,7 @@ function generateHtml(m: ReportMetrics, chartJs: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Brela Report — ${repo} — ${m.dateTo}</title>
+${faviconTag}
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -443,10 +570,16 @@ th.sorted-desc::after{content:' ↓'}
             display:flex;align-items:center;justify-content:space-between;
             position:sticky;top:0;z-index:10">
   <div style="display:flex;align-items:center;gap:10px">
-    <span style="font-size:18px">👻</span>
+    ${iconImg}
     <span style="font-weight:600;font-size:15px;color:#111827">Brela Report</span>
   </div>
-  <div style="font-size:13px;color:#6B7280">${repo} &nbsp;·&nbsp; ${dateRange} &nbsp;·&nbsp; Generated ${generatedAt}</div>
+  <div style="display:flex;align-items:center;gap:20px">
+    <div style="font-size:13px;color:#6B7280">${repo} &nbsp;·&nbsp; ${dateRange} &nbsp;·&nbsp; Generated ${generatedAt}</div>
+    <a href="https://usebrela.com" target="_blank"
+       style="display:inline-flex;align-items:center;gap:6px;background:#111827;color:#fff;font-size:12px;font-weight:600;padding:7px 16px;border-radius:8px;text-decoration:none;letter-spacing:-.1px;white-space:nowrap;box-shadow:0 1px 6px rgba(0,0,0,.18)">
+      Explore Brela Cloud &rarr;
+    </a>
+  </div>
 </nav>
 
 <main style="max-width:1200px;margin:0 auto;padding:32px 24px">
@@ -492,13 +625,19 @@ th.sorted-desc::after{content:' ↓'}
   <div style="display:flex;gap:16px;margin-bottom:28px;align-items:flex-start">
 
     <div style="flex:0 0 60%;background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:20px 24px">
-      <div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:16px">Daily Trend</div>
+      <div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:16px">AI Lines — Daily Trend</div>
       <canvas id="trendChart"></canvas>
     </div>
 
-    <div style="flex:0 0 calc(40% - 16px);background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:20px 24px">
-      <div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:16px">Tool Breakdown</div>
-      <canvas id="toolChart"></canvas>
+    <div style="flex:1;display:flex;flex-direction:column;gap:16px">
+      <div style="background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:20px 24px">
+        <div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:16px">Tool Breakdown</div>
+        <canvas id="toolChart"></canvas>
+      </div>
+      <div id="modelSection" style="background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:20px 24px">
+        <div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:16px">Models Used</div>
+        <canvas id="modelChart"></canvas>
+      </div>
     </div>
 
   </div>
@@ -515,6 +654,7 @@ th.sorted-desc::after{content:' ↓'}
           <tr style="background:#F9FAFB">
             <th data-col="file"  style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;white-space:nowrap;border-bottom:1px solid #E5E7EB">File</th>
             <th data-col="tool"  style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;white-space:nowrap;border-bottom:1px solid #E5E7EB">Top Tool</th>
+            <th data-col="model" style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;white-space:nowrap;border-bottom:1px solid #E5E7EB">Top Model</th>
             <th data-col="ai"    style="padding:10px 16px;text-align:right;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;white-space:nowrap;border-bottom:1px solid #E5E7EB">AI Lines</th>
             <th data-col="total" style="padding:10px 16px;text-align:right;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;white-space:nowrap;border-bottom:1px solid #E5E7EB">Total Lines</th>
             <th data-col="pct"   style="padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;white-space:nowrap;border-bottom:1px solid #E5E7EB">AI%</th>
@@ -538,12 +678,142 @@ th.sorted-desc::after{content:' ↓'}
 
   ${backfillNote}
 
+  <!-- ── Per-tool timeline ── -->
+  <div style="background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:20px 24px;margin-bottom:28px">
+    <div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:16px">Per-Tool Daily Activity</div>
+    <canvas id="toolTrendChart"></canvas>
+  </div>
+
+  <!-- ── Detection method breakdown ── -->
+  <div style="background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:20px 24px;margin-bottom:28px">
+    <div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:16px">Detection Method Breakdown</div>
+    <canvas id="methodChart"></canvas>
+  </div>
+
+  <!-- ── Author × Tool matrix ── -->
+  <div id="authorMatrixSection" style="background:#fff;border:1px solid #E5E7EB;border-radius:8px;margin-bottom:28px;overflow:hidden">
+    <div style="padding:16px 20px;border-bottom:1px solid #E5E7EB">
+      <span style="font-size:13px;font-weight:600;color:#111827">Author × Tool Attribution</span>
+    </div>
+    <div id="authorMatrixBody" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- ── Risk surface ── -->
+  <div id="riskSection" style="margin-bottom:28px">
+    <div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:12px">
+      Risk Surface
+      <span style="font-size:12px;font-weight:400;color:#6B7280;margin-left:6px">files &gt;80% AI with &gt;30 AI lines</span>
+    </div>
+    <div id="riskCards"></div>
+  </div>
+
+  <!-- ── Model table ── -->
+  <div id="modelTableSection" style="background:#fff;border:1px solid #E5E7EB;border-radius:8px;margin-bottom:28px;overflow:hidden">
+    <div style="padding:16px 20px;border-bottom:1px solid #E5E7EB">
+      <span style="font-size:13px;font-weight:600;color:#111827">Model Breakdown</span>
+    </div>
+    <div id="modelTableBody" style="overflow-x:auto"></div>
+  </div>
+
   <!-- ── Export button ── -->
   <div style="display:flex;justify-content:flex-end;margin-top:8px">
     <button id="exportBtn" style="display:inline-flex;align-items:center;gap:6px;
             padding:8px 16px;border-radius:6px;border:1px solid #E5E7EB;
             background:#fff;color:#374151;font-size:13px;font-weight:500;
             cursor:pointer">↓ Export JSON</button>
+  </div>
+
+  <!-- ── Brela Cloud promo ── -->
+  <div style="margin-top:56px;margin-bottom:40px;padding:0 4px">
+    <div style="position:relative;border-radius:20px;overflow:hidden;border:1px solid #E5E7EB;box-shadow:0 4px 24px rgba(0,0,0,.06)">
+
+      <!-- Blurred teaser content -->
+      <div style="filter:blur(6px);pointer-events:none;user-select:none;background:#FAFAFA;padding:32px 32px 28px">
+        <div style="font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.08em;margin-bottom:16px">Org-wide AI Attribution Dashboard</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px">
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:18px">
+            <div style="font-size:10px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Monthly AI Cost</div>
+            <div style="font-size:28px;font-weight:700;color:#111827;letter-spacing:-.5px">$2,847</div>
+            <div style="font-size:11px;color:#10B981;margin-top:6px;font-weight:500">&#9650; 12% vs last month</div>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:18px">
+            <div style="font-size:10px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Engineers Using AI</div>
+            <div style="font-size:28px;font-weight:700;color:#111827;letter-spacing:-.5px">47 / 52</div>
+            <div style="font-size:11px;color:#6B7280;margin-top:6px;font-weight:500">90% adoption rate</div>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:18px">
+            <div style="font-size:10px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Unreviewed AI PRs</div>
+            <div style="font-size:28px;font-weight:700;color:#EF4444;letter-spacing:-.5px">18</div>
+            <div style="font-size:11px;color:#EF4444;margin-top:6px;font-weight:500">Compliance risk flagged</div>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:18px">
+            <div style="font-size:10px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">AI Code ROI</div>
+            <div style="font-size:28px;font-weight:700;color:#111827;letter-spacing:-.5px">3.4×</div>
+            <div style="font-size:11px;color:#6B7280;margin-top:6px;font-weight:500">vs human baseline</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px">
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:18px">
+            <div style="font-size:11px;font-weight:600;color:#111827;margin-bottom:12px">Team Attribution Heatmap — 12 engineers</div>
+            <div style="display:flex;gap:6px;align-items:flex-end;height:56px">
+              <div style="flex:1;background:#BFDBFE;border-radius:4px 4px 0 0;height:65%"></div>
+              <div style="flex:1;background:#BFDBFE;border-radius:4px 4px 0 0;height:42%"></div>
+              <div style="flex:1;background:#3B82F6;border-radius:4px 4px 0 0;height:88%"></div>
+              <div style="flex:1;background:#BFDBFE;border-radius:4px 4px 0 0;height:31%"></div>
+              <div style="flex:1;background:#BFDBFE;border-radius:4px 4px 0 0;height:74%"></div>
+              <div style="flex:1;background:#93C5FD;border-radius:4px 4px 0 0;height:95%"></div>
+              <div style="flex:1;background:#BFDBFE;border-radius:4px 4px 0 0;height:58%"></div>
+              <div style="flex:1;background:#BFDBFE;border-radius:4px 4px 0 0;height:43%"></div>
+              <div style="flex:1;background:#BFDBFE;border-radius:4px 4px 0 0;height:71%"></div>
+              <div style="flex:1;background:#3B82F6;border-radius:4px 4px 0 0;height:82%"></div>
+              <div style="flex:1;background:#BFDBFE;border-radius:4px 4px 0 0;height:39%"></div>
+              <div style="flex:1;background:#BFDBFE;border-radius:4px 4px 0 0;height:67%"></div>
+            </div>
+          </div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:18px">
+            <div style="font-size:11px;font-weight:600;color:#111827;margin-bottom:12px">Compliance Status</div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:12px;color:#6B7280">SOC 2 export</span>
+                <span style="font-size:11px;color:#10B981;font-weight:600;background:#F0FDF4;border:1px solid #BBF7D0;padding:2px 8px;border-radius:20px">Ready</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:12px;color:#6B7280">AI disclosure</span>
+                <span style="font-size:11px;color:#D97706;font-weight:600;background:#FFFBEB;border:1px solid #FDE68A;padding:2px 8px;border-radius:20px">3 gaps</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Overlay CTA -->
+      <div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(250,250,250,0.1) 0%,rgba(250,250,250,0.88) 28%,rgba(250,250,250,1) 50%);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:56px 48px 48px;text-align:center">
+        ${iconDataUrl ? `<img src="${iconDataUrl}" style="width:48px;height:48px;border-radius:12px;margin-bottom:16px;box-shadow:0 4px 16px rgba(0,0,0,.16)">` : '<div style="font-size:36px;margin-bottom:16px">👻</div>'}
+        <div style="font-size:22px;font-weight:700;color:#111827;margin-bottom:10px;letter-spacing:-.4px;line-height:1.3">
+          Get deeper AI insights across your entire org
+        </div>
+        <div style="font-size:14px;color:#6B7280;max-width:480px;line-height:1.75;margin-bottom:28px">
+          Brela Cloud gives your engineering team real-time dashboards, AI cost tracking,
+          compliance-ready exports, and org-wide attribution — all in one place.
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,auto);gap:8px;justify-content:center;margin-bottom:32px">
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:20px;padding:6px 16px;font-size:12px;font-weight:500;color:#374151;white-space:nowrap">&#128202; Org-wide dashboards</div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:20px;padding:6px 16px;font-size:12px;font-weight:500;color:#374151;white-space:nowrap">&#128176; AI cost &amp; ROI tracking</div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:20px;padding:6px 16px;font-size:12px;font-weight:500;color:#374151;white-space:nowrap">&#128274; SOC 2 / compliance exports</div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:20px;padding:6px 16px;font-size:12px;font-weight:500;color:#374151;white-space:nowrap">&#128101; Per-engineer attribution</div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:20px;padding:6px 16px;font-size:12px;font-weight:500;color:#374151;white-space:nowrap">&#9888;&#65039; Risk &amp; review alerts</div>
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:20px;padding:6px 16px;font-size:12px;font-weight:500;color:#374151;white-space:nowrap">&#128279; Jira / Linear / GitHub sync</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+          <a href="https://usebrela.com" target="_blank"
+             style="display:inline-block;background:#111827;color:#fff;font-size:14px;font-weight:600;padding:13px 32px;border-radius:10px;text-decoration:none;letter-spacing:-.1px;box-shadow:0 2px 12px rgba(0,0,0,.22)">
+            Explore Brela Cloud &rarr;
+          </a>
+          <span style="font-size:12px;color:#9CA3AF;letter-spacing:.01em">Free 14-day trial &nbsp;·&nbsp; No credit card required</span>
+        </div>
+      </div>
+
+    </div>
   </div>
 
   <footer style="margin-top:40px;padding-top:16px;border-top:1px solid #E5E7EB;
@@ -557,18 +827,31 @@ th.sorted-desc::after{content:' ↓'}
 ${chartJs}
 </script>
 <script>
-window.addEventListener('load', function() {
+document.addEventListener('DOMContentLoaded', function() {
   var DATA = ${metricsJson};
+
+  function setCanvas(el, w, h) {
+    if (!el) return;
+    el.width  = w; el.height = h;
+    el.style.width  = w + 'px';
+    el.style.height = h + 'px';
+  }
 
   // ── Set canvas sizes BEFORE chart init — prevents ResizeObserver loop ──
   var trendEl = document.getElementById('trendChart');
   var toolEl  = document.getElementById('toolChart');
-  trendEl.width  = 580;
-  trendEl.height = 280;
-  trendEl.style.height = '280px';
-  toolEl.width  = 320;
-  toolEl.height = 280;
-  toolEl.style.height = '280px';
+  setCanvas(trendEl, 580, 280);
+  setCanvas(toolEl,  280, 200);
+
+  // Determine if there is any meaningful model data (i.e. at least one non-'unknown' key)
+  var modelKeys = Object.keys(DATA.perModelBreakdown).filter(function(k) { return k !== 'unknown'; });
+  var modelEl = document.getElementById('modelChart');
+  if (modelKeys.length > 0 && modelEl) {
+    setCanvas(modelEl, 280, 200);
+  }
+
+  // Defer chart init so the browser finishes layout before Chart.js reads canvas dimensions
+  setTimeout(function() {
 
   // ── Tool colour map (Intercom palette) ────────────────────────────────────
   var TOOL_COLORS = {
@@ -590,74 +873,113 @@ window.addEventListener('load', function() {
   var FALLBACK = ['#1F8EFA','#F97316','#8B5CF6','#10B981','#F59E0B','#9CA3AF','#06B6D4'];
 
   // ── Daily trend — line chart ──────────────────────────────────────────────
-  var ctx1 = trendEl.getContext('2d');
-  new Chart(ctx1, {
-    type: 'line',
-    data: {
-      labels: DATA.perDayTrend.map(function(d) { return d.date; }),
-      datasets: [
-        {
-          label: 'Human Lines',
-          data: DATA.perDayTrend.map(function(d) { return d.humanLines; }),
-          borderColor: '#1F8EFA',
-          backgroundColor: 'rgba(31,142,250,.08)',
-          fill: true, tension: 0.35, pointRadius: 3,
-          pointBackgroundColor: '#1F8EFA'
-        },
-        {
-          label: 'AI Lines',
-          data: DATA.perDayTrend.map(function(d) { return d.aiLines; }),
-          borderColor: '#F59E0B',
-          backgroundColor: 'rgba(245,158,11,.08)',
-          fill: true, tension: 0.35, pointRadius: 3,
-          pointBackgroundColor: '#F59E0B'
-        }
-      ]
-    },
-    options: {
-      responsive: false,
-      animation: false,
-      plugins: {
-        legend: { position: 'top', labels: { color: '#6B7280', boxWidth: 12, padding: 16 } }
+  try {
+    var ctx1 = trendEl && trendEl.getContext('2d');
+    if (ctx1) new Chart(ctx1, {
+      type: 'line',
+      data: {
+        labels: DATA.perDayTrend.map(function(d) { return d.date; }),
+        datasets: [
+          {
+            label: 'AI Lines',
+            data: DATA.perDayTrend.map(function(d) { return d.aiLines; }),
+            borderColor: '#F59E0B',
+            backgroundColor: 'rgba(245,158,11,.12)',
+            fill: true, tension: 0.35, pointRadius: 3,
+            pointBackgroundColor: '#F59E0B'
+          }
+        ]
       },
-      scales: {
-        y: { beginAtZero: true, grid: { color: '#F3F4F6' }, ticks: { color: '#6B7280' } },
-        x: { grid: { display: false }, ticks: { color: '#6B7280', maxTicksLimit: 8 } }
+      options: {
+        responsive: false,
+        animation: false,
+        plugins: {
+          legend: { position: 'top', labels: { color: '#6B7280', boxWidth: 12, padding: 16 } }
+        },
+        scales: {
+          y: { beginAtZero: true, grid: { color: '#F3F4F6' }, ticks: { color: '#6B7280' } },
+          x: { grid: { display: false }, ticks: { color: '#6B7280', maxTicksLimit: 8 } }
+        }
       }
-    }
-  });
+    });
+  } catch(e) { console.error('trendChart', e); }
 
   // ── Tool breakdown — doughnut ─────────────────────────────────────────────
-  var tools = Object.keys(DATA.perToolBreakdown);
-  var toolColors = tools.map(function(t, i) {
-    return TOOL_COLORS[t] || FALLBACK[i % FALLBACK.length];
-  });
-  var ctx2 = toolEl.getContext('2d');
-  new Chart(ctx2, {
-    type: 'doughnut',
-    data: {
-      labels: tools,
-      datasets: [{
-        data: tools.map(function(t) { return DATA.perToolBreakdown[t]; }),
-        backgroundColor: toolColors,
-        borderWidth: 2,
-        borderColor: '#ffffff'
-      }]
-    },
-    options: {
-      responsive: false,
-      animation: false,
-      cutout: '65%',
-      plugins: {
-        legend: { position: 'bottom', labels: { color: '#6B7280', boxWidth: 12, padding: 12 } },
-        tooltip: {
-          callbacks: {
-            label: function(ctx) { return ' ' + ctx.label + ': ' + ctx.raw.toFixed(1) + '%'; }
+  try {
+    var tools = Object.keys(DATA.perToolBreakdown);
+    var toolColors = tools.map(function(t, i) {
+      return TOOL_COLORS[t] || FALLBACK[i % FALLBACK.length];
+    });
+    var ctx2 = toolEl && toolEl.getContext('2d');
+    if (ctx2) new Chart(ctx2, {
+      type: 'doughnut',
+      data: {
+        labels: tools,
+        datasets: [{
+          data: tools.map(function(t) { return DATA.perToolBreakdown[t]; }),
+          backgroundColor: toolColors,
+          borderWidth: 2,
+          borderColor: '#ffffff'
+        }]
+      },
+      options: {
+        responsive: false,
+        animation: false,
+        cutout: '65%',
+        plugins: {
+          legend: { position: 'bottom', labels: { color: '#6B7280', boxWidth: 12, padding: 12 } },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) { return ' ' + ctx.label + ': ' + ctx.raw.toFixed(1) + '%'; }
+            }
           }
         }
       }
-    }
-  });
+    });
+  } catch(e) { console.error('toolChart', e); }
+
+  // ── Model breakdown — doughnut (only when model data exists) ────────────
+  var modelSection = document.getElementById('modelSection');
+  if (modelKeys.length > 0 && modelEl && modelSection) {
+    var modelColors = modelKeys.map(function(_, i) { return FALLBACK[i % FALLBACK.length]; });
+    try {
+    var ctx3 = modelEl.getContext('2d');
+    new Chart(ctx3, {
+      type: 'doughnut',
+      data: {
+        labels: modelKeys,
+        datasets: [{
+          data: modelKeys.map(function(m) { return DATA.perModelBreakdown[m]; }),
+          backgroundColor: modelColors,
+          borderWidth: 2,
+          borderColor: '#ffffff'
+        }]
+      },
+      options: {
+        responsive: false,
+        animation: false,
+        cutout: '65%',
+        plugins: {
+          legend: { position: 'bottom', labels: { color: '#6B7280', boxWidth: 12, padding: 12 } },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) { return ' ' + ctx.label + ': ' + ctx.raw.toFixed(1) + '%'; }
+            }
+          }
+        }
+      }
+    });
+    } catch(e) { console.error('modelChart', e); }
+  } else if (modelSection) {
+    // No model data yet — show a friendly hint instead of an empty chart
+    modelSection.innerHTML =
+      '<div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:8px">Models Used</div>' +
+      '<p style="font-size:12px;color:#9CA3AF;line-height:1.6">' +
+        'No model data yet.<br>' +
+        'Re-run <code style="background:#F3F4F6;padding:1px 4px;border-radius:3px">brela init</code> ' +
+        'to pick up the latest shell wrappers, then use your AI tools normally.' +
+      '</p>';
+  }
 
   // ── Sortable heatmap table ────────────────────────────────────────────────
   var table = document.getElementById('heatmapTable');
@@ -686,6 +1008,161 @@ window.addEventListener('load', function() {
     var pctTh = table.querySelector('th[data-col="pct"]');
     if (pctTh) pctTh.classList.add('sorted-desc');
   }
+
+  // ── Per-tool daily timeline — stacked bar ────────────────────────────────
+  var toolTrendEl = document.getElementById('toolTrendChart');
+  if (toolTrendEl && DATA.perToolDayTrend && DATA.perToolDayTrend.length > 0) {
+    setCanvas(toolTrendEl, 960, 260);
+    var trendToolKeys = Object.keys(DATA.perToolBreakdown);
+    var toolTrendDatasets = trendToolKeys.map(function(t, i) {
+      return {
+        label: t,
+        data: DATA.perToolDayTrend.map(function(d) { return d.perTool[t] || 0; }),
+        backgroundColor: TOOL_COLORS[t] || FALLBACK[i % FALLBACK.length],
+        stack: 'tools'
+      };
+    });
+    try {
+      var ctxTT = toolTrendEl.getContext('2d');
+      new Chart(ctxTT, {
+        type: 'bar',
+        data: {
+          labels: DATA.perToolDayTrend.map(function(d) { return d.date; }),
+          datasets: toolTrendDatasets
+        },
+        options: {
+          responsive: false,
+          animation: false,
+          plugins: {
+            legend: { position: 'top', labels: { color: '#6B7280', boxWidth: 12, padding: 16 } }
+          },
+          scales: {
+            y: { beginAtZero: true, stacked: true, grid: { color: '#F3F4F6' }, ticks: { color: '#6B7280' } },
+            x: { stacked: true, grid: { display: false }, ticks: { color: '#6B7280', maxTicksLimit: 8 } }
+          }
+        }
+      });
+    } catch(e) { console.error('toolTrendChart', e); }
+  }
+
+  // ── Detection method breakdown — horizontal bar ───────────────────────────
+  var methodEl = document.getElementById('methodChart');
+  if (methodEl && DATA.perDetectionMethod) {
+    var methodKeys = Object.keys(DATA.perDetectionMethod).sort(function(a, b) {
+      return DATA.perDetectionMethod[b] - DATA.perDetectionMethod[a];
+    });
+    if (methodKeys.length > 0) {
+      var methodHeight = Math.max(120, methodKeys.length * 36 + 40);
+      setCanvas(methodEl, 960, methodHeight);
+      try {
+        var ctxM = methodEl.getContext('2d');
+        new Chart(ctxM, {
+          type: 'bar',
+          data: {
+            labels: methodKeys,
+            datasets: [{
+              label: 'AI Lines',
+              data: methodKeys.map(function(k) { return DATA.perDetectionMethod[k]; }),
+              backgroundColor: '#1F8EFA',
+              borderRadius: 4
+            }]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: false,
+            animation: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { beginAtZero: true, grid: { color: '#F3F4F6' }, ticks: { color: '#6B7280' } },
+              y: { grid: { display: false }, ticks: { color: '#6B7280' } }
+            }
+          }
+        });
+      } catch(e) { console.error('methodChart', e); }
+    } else {
+      methodEl.parentNode.innerHTML += '<p style="font-size:13px;color:#9CA3AF;padding:0 0 8px">No detection method data yet.</p>';
+    }
+  }
+
+  // ── Author × Tool matrix ──────────────────────────────────────────────────
+  var matrixBody = document.getElementById('authorMatrixBody');
+  if (matrixBody && DATA.authorToolMatrix && DATA.authorToolMatrix.length > 0) {
+    var matrixTools = Object.keys(DATA.perToolBreakdown);
+    var thStyle = 'padding:10px 16px;text-align:right;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;border-bottom:1px solid #E5E7EB;background:#F9FAFB';
+    var thLStyle = 'padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;border-bottom:1px solid #E5E7EB;background:#F9FAFB';
+    var headerCells = '<th style="' + thLStyle + '">Author</th>' +
+      matrixTools.map(function(t) { return '<th style="' + thStyle + '">' + t + '</th>'; }).join('') +
+      '<th style="' + thStyle + '">Total</th>';
+    var bodyRows = DATA.authorToolMatrix.map(function(row, i) {
+      var bg = i % 2 === 1 ? '#F9FAFB' : '#ffffff';
+      var cells = matrixTools.map(function(t) {
+        var v = row.tools[t] || 0;
+        var cellStyle = 'padding:10px 16px;font-size:13px;color:' + (v > 0 ? '#111827' : '#D1D5DB') + ';text-align:right;border-bottom:1px solid #F3F4F6';
+        return '<td style="' + cellStyle + '">' + (v > 0 ? v.toLocaleString() : '—') + '</td>';
+      }).join('');
+      return '<tr style="background:' + bg + '">' +
+        '<td style="padding:10px 16px;font-size:13px;color:#111827;border-bottom:1px solid #F3F4F6">' + row.author + '</td>' +
+        cells +
+        '<td style="padding:10px 16px;font-size:13px;font-weight:600;color:#111827;text-align:right;border-bottom:1px solid #F3F4F6">' + row.totalLines.toLocaleString() + '</td>' +
+        '</tr>';
+    }).join('');
+    matrixBody.innerHTML = '<table style="width:100%;border-collapse:collapse"><thead><tr>' + headerCells + '</tr></thead><tbody>' + bodyRows + '</tbody></table>';
+  } else if (matrixBody) {
+    document.getElementById('authorMatrixSection').style.display = 'none';
+  }
+
+  // ── Risk surface cards ────────────────────────────────────────────────────
+  var riskCards = document.getElementById('riskCards');
+  if (riskCards) {
+    if (DATA.riskSurface && DATA.riskSurface.length > 0) {
+      riskCards.innerHTML = DATA.riskSurface.map(function(f) {
+        return '<div style="background:#fff;border:1px solid #FCA5A5;border-left:4px solid #EF4444;border-radius:8px;padding:14px 20px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:16px">' +
+          '<div style="min-width:0">' +
+          '<span style="font-family:\\'SF Mono\\',Menlo,monospace;font-size:12px;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">' + f.file + '</span>' +
+          '<span style="font-size:12px;color:#6B7280">' + f.topTool + (f.topModel ? ' · ' + f.topModel : '') + ' · ' + f.aiLines.toLocaleString() + ' AI lines</span>' +
+          '</div>' +
+          '<span style="flex-shrink:0;background:#FEE2E2;color:#B91C1C;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600">' + f.aiPct.toFixed(1) + '% AI</span>' +
+          '</div>';
+      }).join('');
+    } else {
+      document.getElementById('riskSection').innerHTML =
+        '<div style="font-size:13px;font-weight:600;color:#111827;margin-bottom:8px">Risk Surface</div>' +
+        '<p style="font-size:13px;color:#6B7280">No high-risk files detected.</p>';
+    }
+  }
+
+  // ── Model breakdown table ────────────────────────────────────────────────
+  var modelTableBody = document.getElementById('modelTableBody');
+  if (modelTableBody) {
+    var mkWithData = Object.keys(DATA.perModelBreakdown).filter(function(k) { return k !== 'unknown'; });
+    if (mkWithData.length > 0) {
+      var totalAiLines = DATA.totalAiLines;
+      var mkSorted = mkWithData.slice().sort(function(a, b) { return DATA.perModelBreakdown[b] - DATA.perModelBreakdown[a]; });
+      var thS = 'padding:10px 16px;text-align:right;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;border-bottom:1px solid #E5E7EB;background:#F9FAFB';
+      var thLS = 'padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;border-bottom:1px solid #E5E7EB;background:#F9FAFB';
+      var mRows = mkSorted.map(function(mk, i) {
+        var pctVal = DATA.perModelBreakdown[mk];
+        var linesVal = Math.round(totalAiLines * pctVal / 100);
+        var bg = i % 2 === 1 ? '#F9FAFB' : '#ffffff';
+        var barWidth = Math.round(pctVal);
+        var bar = '<div style="height:6px;border-radius:3px;background:#1F8EFA;width:' + barWidth + '%;min-width:2px"></div>';
+        return '<tr style="background:' + bg + '">' +
+          '<td style="padding:10px 16px;font-family:\\'SF Mono\\',Menlo,monospace;font-size:12px;color:#111827;border-bottom:1px solid #F3F4F6">' + mk + '</td>' +
+          '<td style="padding:10px 16px;font-size:13px;color:#111827;text-align:right;border-bottom:1px solid #F3F4F6">' + linesVal.toLocaleString() + '</td>' +
+          '<td style="padding:10px 32px 10px 16px;border-bottom:1px solid #F3F4F6;min-width:160px">' +
+            '<div style="display:flex;align-items:center;gap:8px">' + bar +
+            '<span style="font-size:12px;color:#6B7280;white-space:nowrap">' + pctVal.toFixed(1) + '%</span></div>' +
+          '</td></tr>';
+      }).join('');
+      modelTableBody.innerHTML = '<table style="width:100%;border-collapse:collapse">' +
+        '<thead><tr><th style="' + thLS + '">Model</th><th style="' + thS + '">AI Lines</th><th style="' + thLS + ';padding-left:16px">Share</th></tr></thead>' +
+        '<tbody>' + mRows + '</tbody></table>';
+    } else {
+      document.getElementById('modelTableSection').style.display = 'none';
+    }
+  }
+
+  }, 0); // end setTimeout — charts and dynamic sections
 
   // ── Export button ─────────────────────────────────────────────────────────
   document.getElementById('exportBtn').addEventListener('click', function() {
@@ -767,7 +1244,7 @@ export function reportCommand(): Command {
 
       try {
         const chartJs = loadChartJs();
-        const html = generateHtml(metrics, chartJs);
+        const html = generateHtml(metrics, chartJs, loadBrelaIconBase64());
         const outPath = path.resolve(opts.output);
         fs.writeFileSync(outPath, html, 'utf8');
 

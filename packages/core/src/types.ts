@@ -27,13 +27,34 @@ export enum DetectionMethod {
   MANUAL              = 'MANUAL',
 }
 
+export interface LineRange {
+  start: number; // 1-indexed, inclusive
+  end: number;   // 1-indexed, inclusive
+  /** AI-written lines, newline-separated. Only present when captureCode is enabled in .brela/config.json. */
+  content?: string;
+}
+
+/** Persisted to .brela/config.json */
+export interface BrelaConfig {
+  /**
+   * When true, the daemon stores the actual AI-written source lines in each
+   * LineRange. Useful for audits; off by default to avoid session file bloat.
+   * Toggle: echo '{"captureCode":true}' > .brela/config.json  (restart daemon)
+   */
+  captureCode?: boolean;
+}
+
 export interface AttributionEntry {
   file: string;
   tool: AITool;
+  /** Resolved model string, e.g. "claude-sonnet-4-5". Absent in entries recorded before v0.1.6. */
+  model?: string;
   confidence: 'high' | 'medium' | 'low';
   detectionMethod: DetectionMethod;
   linesStart: number;
   linesEnd: number;
+  /** Exact line ranges written by AI. 1-indexed, inclusive. Present when daemon has diff data. */
+  lineRanges?: LineRange[];
   charsInserted: number;
   timestamp: string;
   sessionId: string;
