@@ -5,6 +5,20 @@
 [![npm](https://img.shields.io/npm/v/@brela-dev/cli)](https://www.npmjs.com/package/@brela-dev/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+## What it does
+
+- Detects AI-generated code from GitHub Copilot, Claude Code, Cursor, Windsurf, Cline, Aider, Continue, and more
+- Attributes insertions to the correct tool via VS Code extension hooks, shell wrappers, and git hooks
+- Reports a breakdown of AI vs human contributions per file, author, or date range
+
+## Packages
+
+| Package | Description |
+|---|---|
+| [`@brela/core`](./packages/core) | Shared types and session writer |
+| [`brela`](./packages/cli) | CLI — `brela init`, `brela report`, `brela hook` |
+| [`brela-vscode`](./packages/vscode-extension) | VS Code extension — silent background attribution |
+
 ## Quick start
 
 ```bash
