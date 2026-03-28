@@ -1,6 +1,6 @@
 {
   "name": "@brela-dev/core",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "Shared types and session writer for the Brela AI attribution system",
   "license": "MIT",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@brela-dev/daemon",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "Background file-watcher daemon for Brela AI attribution",
   "license": "MIT",
   "type": "module",
@@ -21,7 +21,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@brela-dev/core": "^0.1.4",
+    "@brela-dev/core": "^0.1.6",
     "chokidar": "^5.0.0"
   },
   "license": "MIT"

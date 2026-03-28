@@ -1,8 +1,10 @@
 src/
 node_modules/
+**/node_modules/**
 esbuild.js
 tsconfig.json
 .eslintrc*
 **/*.map
 **/__tests__/
 *.test.ts
+*.vsix
