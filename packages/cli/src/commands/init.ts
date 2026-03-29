@@ -43,6 +43,7 @@ _brela_session() {
 }
 claude() { _brela_session claude-code claude "$@"; }
 aider()  { _brela_session aider aider "$@"; }
+codex()  { _brela_session codex-cli codex "$@"; }
 
 # Copilot CLI (no file writes — just log the intent)
 gh() {
@@ -84,6 +85,10 @@ end
 
 function aider
   _brela_session aider $argv
+end
+
+function codex
+  _brela_session codex-cli $argv
 end
 
 function gh

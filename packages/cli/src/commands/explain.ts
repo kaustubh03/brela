@@ -31,6 +31,7 @@ function toolColour(tool: string): (t: string) => string {
   if (tool.startsWith('CURSOR'))       return purple;
   if (tool === 'CHATGPT_PASTE')        return grey;
   if (tool === 'CODEIUM')              return purple;
+  if (tool.startsWith('CODEX'))         return green;
   return (t: string) => t;
 }
 
@@ -53,6 +54,7 @@ const TOOL_LABELS: Record<string, string> = {
   CODEIUM:           'Windsurf/Codeium',
   CLINE:             'Cline',
   AIDER:             'Aider',
+  CODEX_CLI:         'Codex CLI',
   CONTINUE:          'Continue',
   CHATGPT_PASTE:     'ChatGPT Paste',
   GENERIC_AGENT:     'AI Agent',

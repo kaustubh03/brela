@@ -86,6 +86,10 @@ describe('AITool enum', () => {
   it('COPILOT_CLI is distinct from COPILOT_AGENT', () => {
     expect(AITool.COPILOT_CLI).not.toBe(AITool.COPILOT_AGENT);
   });
+
+  it('CODEX_CLI exists', () => {
+    expect(AITool.CODEX_CLI).toBe('CODEX_CLI');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -337,6 +341,17 @@ describe('InsertionDetector.checkCoAuthorTrailer()', () => {
     const result = detector.checkCoAuthorTrailer(root, 0, 0, 0);
     expect(result!.tool).toBe(AITool.CLAUDE_CODE);
   });
+
+  it('returns CODEX_CLI when commit has Co-Authored-By: Codex', () => {
+    fs.writeFileSync(
+      path.join(root, '.git', 'COMMIT_EDITMSG'),
+      'feat: add feature\n\nCo-Authored-By: Codex <noreply@openai.com>',
+    );
+    const result = detector.checkCoAuthorTrailer(root, 0, 10, 500);
+    expect(result).not.toBeNull();
+    expect(result!.tool).toBe(AITool.CODEX_CLI);
+    expect(result!.detectionMethod).toBe(DetectionMethod.CO_AUTHOR_TRAILER);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -382,6 +397,13 @@ describe('InsertionDetector.checkAgentSave() — shell intent', () => {
     writeShellIntent(root, 'continue');
     const result = detector.checkAgentSave(root);
     expect(result!.tool).toBe(AITool.CONTINUE);
+  });
+
+  it('returns CODEX_CLI via SHELL_WRAPPER when codex-cli intent is recent', () => {
+    writeShellIntent(root, 'codex-cli');
+    const result = detector.checkAgentSave(root);
+    expect(result!.tool).toBe(AITool.CODEX_CLI);
+    expect(result!.detectionMethod).toBe(DetectionMethod.SHELL_WRAPPER);
   });
 
   it('ignores stale shell intent (> 5 minutes old) and falls back to extension', () => {
@@ -504,6 +526,13 @@ describe('InsertionDetector.checkAgentSave() — extension fallback', () => {
     const result = detector.checkAgentSave(root);
     expect(result!.tool).toBe(AITool.AIDER);
   });
+
+  it('returns CODEX_CLI when .codex/ directory exists', () => {
+    fs.mkdirSync(path.join(root, '.codex'), { recursive: true });
+    const result = detector.checkAgentSave(root);
+    expect(result!.tool).toBe(AITool.CODEX_CLI);
+    expect(result!.detectionMethod).toBe(DetectionMethod.EXTERNAL_FILE_WRITE);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -525,6 +554,13 @@ describe('InsertionDetector.checkFileCreation()', () => {
     writeShellIntent(root, 'claude-code');
     const result = detector.checkFileCreation(root);
     expect(result.tool).toBe(AITool.CLAUDE_CODE_AGENT);
+    expect(result.detectionMethod).toBe(DetectionMethod.SHELL_WRAPPER);
+  });
+
+  it('returns CODEX_CLI via SHELL_WRAPPER for recent codex-cli intent', () => {
+    writeShellIntent(root, 'codex-cli');
+    const result = detector.checkFileCreation(root);
+    expect(result.tool).toBe(AITool.CODEX_CLI);
     expect(result.detectionMethod).toBe(DetectionMethod.SHELL_WRAPPER);
   });
 

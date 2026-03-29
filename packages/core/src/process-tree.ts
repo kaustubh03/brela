@@ -107,6 +107,7 @@ const MATCH_RULES: MatchRule[] = [
   { nameSubstr: 'aider',    tool: AITool.AIDER },
   { nameSubstr: 'codeium',  tool: AITool.CODEIUM },
   { nameSubstr: 'cline',    tool: AITool.CLINE },
+  { nameSubstr: 'codex',    tool: AITool.CODEX_CLI },
   { nameSubstr: 'continue', tool: AITool.CONTINUE },
   { nameSubstr: 'cursor',   tool: AITool.CURSOR },
   // "claude" executable (Claude Code CLI)
@@ -121,6 +122,7 @@ const MATCH_RULES: MatchRule[] = [
   { nameSubstr: 'node', cmdlineSubstr: 'continue', tool: AITool.CONTINUE },
   { nameSubstr: 'node', cmdlineSubstr: 'aider',    tool: AITool.AIDER },
   { nameSubstr: 'node', cmdlineSubstr: 'chatgpt',  tool: AITool.CHATGPT_PASTE },
+  { nameSubstr: 'node', cmdlineSubstr: 'codex',    tool: AITool.CODEX_CLI },
 ];
 
 export function matchProcessToAITool(

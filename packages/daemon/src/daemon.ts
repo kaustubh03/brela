@@ -44,6 +44,7 @@ function toolFromIntent(intentTool: string): AITool {
   if (intentTool === 'copilot-cli') return AITool.COPILOT_CLI;
   if (intentTool === 'aider')       return AITool.AIDER;
   if (intentTool === 'continue')    return AITool.CONTINUE;
+  if (intentTool === 'codex-cli')   return AITool.CODEX_CLI;
   return AITool.UNKNOWN;
 }
 
