@@ -151,9 +151,18 @@ function detectAgentTool(workspaceRoot: string): { tool: AITool; confidence: 'hi
  * True when OpenAI Codex CLI has been used in this workspace.
  * Codex has no VS Code extension — detection relies on the .codex/ config
  * directory that Codex creates in the project root.
+ *
+ * Note: a .codex/ directory can persist after Codex is no longer in use, so
+ * this is a lower-confidence signal than an active VS Code extension. It is
+ * placed after extension-based checks (Copilot, Claude Code) in
+ * detectAgentTool() so that real-time signals take priority.
  */
 function hasCodex(workspaceRoot: string): boolean {
-  return fs.existsSync(path.join(workspaceRoot, '.codex'));
+  try {
+    return fs.statSync(path.join(workspaceRoot, '.codex')).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function hasKnownAIExtension(workspaceRoot: string): boolean {
@@ -432,29 +441,28 @@ export class InsertionDetector {
     linesEnd: number,
     charsInserted: number,
   ): DetectionResult | null {
+    // Data-driven: map co-author name substrings to tools. Checked in order;
+    // easy to extend when new AI tools adopt the Co-Authored-By convention.
+    const CO_AUTHOR_MAP: Array<[string, AITool]> = [
+      ['claude', AITool.CLAUDE_CODE],
+      ['codex',  AITool.CODEX_CLI],
+    ];
+
     const msgPath = path.join(workspaceRoot, '.git', 'COMMIT_EDITMSG');
     try {
       if (!fs.existsSync(msgPath)) return null;
       const msg = fs.readFileSync(msgPath, 'utf8').toLowerCase();
-      if (msg.includes('co-authored-by: claude')) {
-        return {
-          tool:            AITool.CLAUDE_CODE,
-          confidence:      'high',
-          detectionMethod: DetectionMethod.CO_AUTHOR_TRAILER,
-          linesStart,
-          linesEnd,
-          charsInserted,
-        };
-      }
-      if (msg.includes('co-authored-by: codex')) {
-        return {
-          tool:            AITool.CODEX_CLI,
-          confidence:      'high',
-          detectionMethod: DetectionMethod.CO_AUTHOR_TRAILER,
-          linesStart,
-          linesEnd,
-          charsInserted,
-        };
+      for (const [name, tool] of CO_AUTHOR_MAP) {
+        if (msg.includes(`co-authored-by: ${name}`)) {
+          return {
+            tool,
+            confidence:      'high',
+            detectionMethod: DetectionMethod.CO_AUTHOR_TRAILER,
+            linesStart,
+            linesEnd,
+            charsInserted,
+          };
+        }
       }
       return null;
     } catch {

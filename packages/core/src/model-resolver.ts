@@ -17,7 +17,7 @@ const DEFAULTS: Record<AITool, string> = {
   [AITool.CODEIUM]:           'unknown',
   [AITool.CLINE]:             'unknown',
   [AITool.AIDER]:             'gpt-4o',
-  [AITool.CODEX_CLI]:         'codex-mini',
+  [AITool.CODEX_CLI]:         'codex-mini',  // Codex CLI default as of v0.1 (https://github.com/openai/codex)
   [AITool.CONTINUE]:          'unknown',
   [AITool.CHATGPT_PASTE]:     'unknown',
   [AITool.UNKNOWN]:           'unknown',

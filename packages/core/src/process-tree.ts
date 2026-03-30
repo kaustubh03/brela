@@ -102,6 +102,10 @@ interface MatchRule {
   tool: AITool;
 }
 
+// Rules are evaluated in order — first match wins. Substrings are chosen to be
+// specific enough to avoid collisions with unrelated process names. "codex" is
+// short but does not appear in any other tool name in this list, and the OpenAI
+// Codex CLI binary is literally named "codex", so this is safe in practice.
 const MATCH_RULES: MatchRule[] = [
   // Dedicated CLI binaries — highest specificity
   { nameSubstr: 'aider',    tool: AITool.AIDER },
