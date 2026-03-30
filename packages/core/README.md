@@ -27,6 +27,7 @@ AITool.CURSOR_AGENT      // Cursor Composer / background agent
 AITool.CODEIUM           // Codeium / Windsurf
 AITool.CLINE             // Cline (saoudrizwan.claude-dev)
 AITool.AIDER             // Aider CLI
+AITool.CODEX_CLI         // OpenAI Codex CLI
 AITool.CONTINUE          // Continue.dev
 AITool.CHATGPT_PASTE     // Large paste with no known AI extension
 AITool.GENERIC_AGENT     // Multi-file burst, tool unknown

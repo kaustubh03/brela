@@ -75,14 +75,14 @@ const TOOL_LABELS: Record<string, string> = {
   COPILOT: 'Copilot', COPILOT_AGENT: 'Copilot Agent', COPILOT_CLI: 'Copilot CLI',
   CLAUDE_CODE: 'Claude Code', CLAUDE_CODE_AGENT: 'Claude Code Agent',
   CURSOR: 'Cursor', CURSOR_AGENT: 'Cursor Agent',
-  CODEIUM: 'Codeium', CLINE: 'Cline', AIDER: 'Aider', CONTINUE: 'Continue',
+  CODEIUM: 'Codeium', CLINE: 'Cline', AIDER: 'Aider', CODEX_CLI: 'Codex CLI', CONTINUE: 'Continue',
   CHATGPT_PASTE: 'ChatGPT Paste', GENERIC_AGENT: 'AI Agent', UNKNOWN: 'Unknown',
 };
 function toolLabel(t: string): string { return TOOL_LABELS[t] ?? t; }
 
 const TRAILER_MAP: Record<string, AITool> = {
   claude: AITool.CLAUDE_CODE, copilot: AITool.COPILOT,
-  cursor: AITool.CURSOR, codeium: AITool.CODEIUM,
+  cursor: AITool.CURSOR, codeium: AITool.CODEIUM, codex: AITool.CODEX_CLI,
 };
 function toolFromCoAuthor(name: string): AITool | null {
   const lc = name.toLowerCase();
@@ -867,6 +867,7 @@ document.addEventListener('DOMContentLoaded', function() {
     'Cline':             '#F59E0B',
     'Aider':             '#84CC16',
     'Continue':          '#14B8A6',
+    'Codex CLI':         '#10A37F',
     'AI Agent':          '#6B7280',
     'Unknown':           '#9CA3AF'
   };

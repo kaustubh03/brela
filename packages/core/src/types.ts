@@ -12,6 +12,7 @@ export enum AITool {
   CURSOR_AGENT      = 'CURSOR_AGENT',       // Cursor Composer / background agent
   CLINE             = 'CLINE',              // Cline (saoudrizwan.claude-dev)
   AIDER             = 'AIDER',              // Aider CLI
+  CODEX_CLI         = 'CODEX_CLI',          // OpenAI Codex CLI
   CONTINUE          = 'CONTINUE',           // Continue.dev
   GENERIC_AGENT     = 'GENERIC_AGENT',      // Multi-file burst, tool unknown
   UNKNOWN           = 'UNKNOWN',

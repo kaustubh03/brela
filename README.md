@@ -7,7 +7,7 @@
 
 ## What it does
 
-- Detects AI-generated code from GitHub Copilot, Claude Code, Cursor, Windsurf, Cline, Aider, Continue, and more
+- Detects AI-generated code from GitHub Copilot, Claude Code, Cursor, Windsurf, Cline, Aider, Continue, Codex CLI, and more
 - Attributes insertions to the correct tool via VS Code extension hooks, shell wrappers, and git hooks
 - Reports a breakdown of AI vs human contributions per file, author, or date range
 
@@ -52,11 +52,12 @@ brela init
 | Cline | VS Code extension |
 | Continue | VS Code extension |
 | Aider | Shell wrapper, external file write |
+| Codex CLI | Shell wrapper, external file write |
 | ChatGPT paste | Large-insertion heuristic |
 
 ## How it works
 
-1. **Shell wrappers** — `brela init` wraps `claude`, `gh copilot`, and other AI CLIs in your shell. Every invocation logs `{ tool, timestamp }` to `.brela/shell-intents.jsonl`
+1. **Shell wrappers** — `brela init` wraps `claude`, `codex`, `gh copilot`, and other AI CLIs in your shell. Every invocation logs `{ tool, timestamp }` to `.brela/shell-intents.jsonl`
 2. **VS Code extension** — watches `onDidChangeTextDocument` and `onDidSaveTextDocument`; attributes large insertions, agent saves, and file creations to the correct tool
 3. **Daemon** — background chokidar watcher diffs files before/after AI writes to record exact line ranges
 4. **Git hooks** — pre-commit captures staged AI attributions; post-commit fills in the real commit hash

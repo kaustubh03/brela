@@ -17,6 +17,7 @@ const DEFAULTS: Record<AITool, string> = {
   [AITool.CODEIUM]:           'unknown',
   [AITool.CLINE]:             'unknown',
   [AITool.AIDER]:             'gpt-4o',
+  [AITool.CODEX_CLI]:         'codex-mini',  // Codex CLI default as of v0.1 (https://github.com/openai/codex)
   [AITool.CONTINUE]:          'unknown',
   [AITool.CHATGPT_PASTE]:     'unknown',
   [AITool.UNKNOWN]:           'unknown',
@@ -257,6 +258,12 @@ export class ModelResolver {
       case AITool.CONTINUE: {
         const json = readJson(path.join(home, '.continue', 'config.json'));
         return json ? deepGet(json, 'models.0.model') : null;
+      }
+
+      // ── Codex CLI ──────────────────────────────────────────────────────
+      case AITool.CODEX_CLI: {
+        const json = readJson(path.join(home, '.codex', 'config.json'));
+        return json ? str(json, 'model') : null;
       }
 
       default:
